@@ -1,0 +1,4 @@
+# Personal financial data - never commit
+finance-data*.json
+backups/
+*.xlsx

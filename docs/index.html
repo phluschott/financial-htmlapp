@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'">
+<title>Paycheck Planner — know what each paycheck has to pay</title>
+<meta name="description" content="A free, offline visual aid that shows where each paycheck's money is going and when. Not financial advice. Download it and use it privately in your browser.">
+<style>
+:root { --bg:#f5f6f8; --card:#fff; --ink:#1c2330; --muted:#667085; --line:#e3e6ec; --accent:#2f6fed; --accent-ink:#fff; --good:#1a7f4b; --code:#eef1f6; }
+@media (prefers-color-scheme: dark) { :root { --bg:#12151b; --card:#1b2029; --ink:#e8ebf1; --muted:#98a2b3; --line:#2b3240; --accent:#5b8cff; --accent-ink:#0b1020; --good:#4cc38a; --code:#232a36; } }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.6 system-ui,-apple-system,"Segoe UI",sans-serif; }
+.wrap { max-width: 860px; margin: 0 auto; padding: 0 16px 64px; }
+header.hero { padding: 56px 0 28px; }
+h1 { font-size: clamp(30px, 6vw, 44px); line-height: 1.15; margin: 0 0 14px; letter-spacing: -.02em; }
+h2 { font-size: 22px; margin: 44px 0 10px; }
+h3 { font-size: 16px; margin: 18px 0 4px; }
+p { margin: 0 0 12px; }
+.lede { font-size: 19px; color: var(--muted); max-width: 640px; }
+.stress { display:grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin: 22px 0 18px; }
+.stress > div { background: var(--card); border: 1px solid var(--line); border-left: 5px solid var(--accent); border-radius: 10px; padding: 14px 16px; font-size: 16px; }
+.stress b { display:block; font-size: 17px; margin-bottom: 4px; }
+.btn { display:inline-block; background:var(--accent); color:var(--accent-ink); padding: 12px 22px; border-radius: 10px; font-weight: 650; text-decoration: none; }
+.btn:focus-visible, a:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.meta { color: var(--muted); font-size: 14px; margin-top: 10px; }
+.meta code { word-break: break-all; }
+td, th { overflow-wrap: anywhere; }
+.shot { width: 100%; border: 1px solid var(--line); border-radius: 14px; margin-top: 26px; box-shadow: 0 10px 30px rgba(0,0,0,.08); }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 12px; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; }
+.card h3 { margin-top: 0; }
+.card p { color: var(--muted); font-size: 15px; margin: 0; }
+ol.steps { padding-left: 22px; } ol.steps li { margin-bottom: 8px; }
+code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13.5px; }
+pre { background: var(--code); padding: 12px 14px; border-radius: 10px; overflow-x: auto; margin: 6px 0 14px; }
+code.hash { display:block; background: var(--code); padding: 10px 12px; border-radius: 8px; word-break: break-all; user-select: all; }
+.note { border-left: 4px solid var(--accent); background: var(--card); padding: 12px 16px; border-radius: 0 10px 10px 0; font-size: 15px; color: var(--muted); }
+table { border-collapse: collapse; width: 100%; font-size: 15px; } td, th { text-align:left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; } th { color: var(--muted); font-weight: 600; }
+a { color: var(--accent); }
+footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); padding-top: 18px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="hero">
+  <h1>Know what each paycheck has to pay — and what’s left.</h1>
+  <p class="lede">Paycheck Planner is a simple <b>visual aid</b>: it lays out where your money is going and when. It splits your month by paycheck and, for each one, lists everything that comes out before the next paycheck, in date order.</p>
+  <div class="stress" role="note" aria-label="Important">
+    <div><b>1 &middot; It is only a visual aid.</b> It shows you where your money is going and when. That is all it is designed to do. It does not tell you what to do with your money.</div>
+    <div><b>2 &middot; It is not financial advice.</b> Nothing in this app or on this website is financial, tax, legal, or investment advice. The numbers are only the figures you type in.</div>
+  </div>
+  <p><a class="btn" href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/paycheck-planner-1.0.0.zip" rel="noopener">Download v1.0.0 (.zip, 74 KB)</a></p>
+  <p class="meta">Hosted on GitHub. Free. Works offline. No account, no tracking. <a href="#verify">Verify the download</a> · SHA-256 <code>0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e</code></p>
+  <img class="shot" src="assets/screenshot.png" alt="A paycheck card listing the income and ten payments in date order, with a running balance after each and $347.53 left to play with" width="948" height="785">
+</header>
+
+<h2>Built for the “what does the next two weeks look like?” problem</h2>
+<p>When bills pull money on different days and you are paid every other week, it is hard to hold it all in your head. This app does it for you.</p>
+<div class="cards">
+  <div class="card"><h3>By paycheck</h3><p>Each paycheck is a card. Bills, subscriptions, credit card minimums, and transfers land on the paycheck that comes before their due date.</p></div>
+  <div class="card"><h3>In date order</h3><p>See every payment for that paycheck in the order it comes out, with a running “left after” figure — so you can see the day it gets tight.</p></div>
+  <div class="card"><h3>What’s left to play with</h3><p>Income minus what is due. Send the leftover to savings, a sinking fund, or an extra debt payment with one click.</p></div>
+  <div class="card"><h3>Whole-month view</h3><p>A month with two paychecks is two cards. Your next paycheck is highlighted, and landed income is kept separate from expected income.</p></div>
+  <div class="card"><h3>Sinking funds</h3><p>Named buckets (new car, house…) you add to when you choose and pull back from when you need to.</p></div>
+  <div class="card"><h3>Spreadsheet export</h3><p>Export any month, plus your bills and funds, to an .xlsx file.</p></div>
+</div>
+
+<h2>Private by design</h2>
+<div class="cards">
+  <div class="card"><h3>Runs on your computer</h3><p>You download it and open it in your browser. It never needs the internet, and this website never sees your data.</p></div>
+  <div class="card"><h3>No network access</h3><p>The page ships with a Content-Security-Policy that blocks every network request, and the code is plain, readable JavaScript.</p></div>
+  <div class="card"><h3>Optional encryption</h3><p>Set a password and your data file is encrypted with AES-256-GCM using your browser’s built-in crypto. There is no recovery if you forget it.</p></div>
+</div>
+<p style="margin-top:14px"><b>Not a bank dashboard.</b> It does not connect to your accounts and does not track balances. You tell it your income schedule and your bills; it lays them out so you can see them.</p>
+
+<h2>Get started</h2>
+<ol class="steps">
+  <li><a href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/paycheck-planner-1.0.0.zip" rel="noopener">Download the zip</a> and <a href="#verify">verify the hash</a> (optional but recommended).</li>
+  <li>Unzip it into a folder you will keep, such as Documents.</li>
+  <li>Open <code>index.html</code> in your browser (double-click it) and follow the short setup.</li>
+  <li>In Chrome or Edge, choose that same folder when asked, and your data autosaves there with backups. In other browsers, use <b>Save file</b> and <b>Open a data file</b>.</li>
+</ol>
+
+<h3>Browser support</h3>
+<table>
+  <tr><th>Chrome, Edge, Opera</th><td>Autosaves <code>finance-data.json</code> into the folder you choose, and keeps timestamped backups.</td></tr>
+  <tr><th>Firefox, Safari, others</th><td>Works fully, but cannot write to a folder. You download your data file with <b>Save file</b> and load it with <b>Open a data file</b>.</td></tr>
+</table>
+
+<h2 id="verify">Verify your download</h2>
+<p>Compare the SHA-256 fingerprint of the file you downloaded with this one. If they match, the file is exactly what was published.</p>
+<p><b>paycheck-planner-1.0.0.zip</b></p>
+<code class="hash">0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e</code>
+<h3>Windows (PowerShell)</h3>
+<pre>Get-FileHash .\paycheck-planner-1.0.0.zip -Algorithm SHA256</pre>
+<h3>macOS</h3>
+<pre>shasum -a 256 paycheck-planner-1.0.0.zip</pre>
+<h3>Linux</h3>
+<pre>sha256sum paycheck-planner-1.0.0.zip</pre>
+<p>Or download <a href="https://github.com/phluschott/financial-htmlapp/blob/main/docs/downloads/SHA256SUMS" rel="noopener">SHA256SUMS</a> (use the Raw button) into the same folder and run <code>sha256sum -c SHA256SUMS</code> (Linux) or <code>shasum -a 256 -c SHA256SUMS</code> (macOS).</p>
+<p class="note"><b>What this does and doesn’t prove.</b> A matching hash shows your download was not corrupted or altered on the way to you. It cannot, on its own, show that this website was not changed, since the hash is published here too. For stronger assurance, compare it with the copy in the project’s source repository, or rebuild the zip yourself: the build is reproducible, so <code>python3 build.py</code> on the source produces a zip with the same hash. You can also open the unzipped files in a text editor — there are only three small ones.</p>
+
+<h2>Good to know</h2>
+<ul>
+  <li><b>Back up your data file.</b> It is the only copy of your information. Keep it somewhere safe and private.</li>
+  <li><b>No password recovery.</b> If you turn on encryption and forget the password, the data cannot be opened.</li>
+  <li><b>It is a visual aid, not financial advice.</b> It does not recommend, evaluate, or approve any financial decision, and it comes with no warranty. If you need advice, talk to a qualified professional.</li>
+  <li>It is only as accurate as what you enter. Check amounts and due dates against your own statements.</li>
+  <li>Changing an amount (like a price increase) applies going forward; past months keep their old values.</li>
+</ul>
+
+<footer>
+  A visual aid, not financial advice. · Paycheck Planner v1.0.0 · built 2026-10-27 · <a href="https://github.com/phluschott/financial-htmlapp/blob/main/docs/downloads/SHA256SUMS" rel="noopener">SHA256SUMS</a> · <a href="https://github.com/phluschott/financial-htmlapp" rel="noopener">Source code</a>
+</footer>
+</div>
+</body>
+</html>
