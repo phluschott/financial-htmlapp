@@ -17,3 +17,7 @@ python3 build.py --check  # confirms the page, SHA256SUMS and a fresh rebuild al
 - Older zips stay in `docs/downloads/` and remain listed in `SHA256SUMS`.
 - The landing page template is `site/index.template.html`; the screenshot is `docs/assets/screenshot.png`. The download links in the template point at the file on `main` in this repository.
 - Pages setup: repository **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `/docs`**.
+
+## To do for the next release
+
+- **Rename the app to "Visual Paycheck Planner".** The v1.0.0 release is titled "Visual Paycheck Planner v1.0.0", but the app, download page, README and release notes still say "Paycheck Planner". Update the in-app title and Settings → About (`app.js`), `index.html` title, `site/index.template.html`, `package/USAGE.txt`, `README.md`, and the zip name in `build.py` (`NAME`), then bump the version (the v1.0.0 zip must not change once published) and rebuild.
