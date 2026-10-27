@@ -51,8 +51,8 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
     <div><b>1 &middot; It is only a visual aid.</b> It shows you where your money is going and when. That is all it is designed to do. It does not tell you what to do with your money.</div>
     <div><b>2 &middot; It is not financial advice.</b> Nothing in this app or on this website is financial, tax, legal, or investment advice. The numbers are only the figures you type in.</div>
   </div>
-  <p><a class="btn" href="downloads/paycheck-planner-1.0.0.zip" download>Download v1.0.0 (.zip, 74 KB)</a></p>
-  <p class="meta">Free. Works offline. No account, no tracking. <a href="#verify">Verify the download</a> · SHA-256 <code>0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e</code></p>
+  <p><a class="btn" href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/paycheck-planner-1.0.0.zip" rel="noopener">Download v1.0.0 (.zip, 74 KB)</a></p>
+  <p class="meta">Hosted on GitHub. Free. Works offline. No account, no tracking. <a href="#verify">Verify the download</a> · SHA-256 <code>0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e</code></p>
   <img class="shot" src="assets/screenshot.png" alt="A paycheck card listing the income and ten payments in date order, with a running balance after each and $347.53 left to play with" width="948" height="785">
 </header>
 
@@ -77,7 +77,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
 
 <h2>Get started</h2>
 <ol class="steps">
-  <li><a href="downloads/paycheck-planner-1.0.0.zip" download>Download the zip</a> and <a href="#verify">verify the hash</a> (optional but recommended).</li>
+  <li><a href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/paycheck-planner-1.0.0.zip" rel="noopener">Download the zip</a> and <a href="#verify">verify the hash</a> (optional but recommended).</li>
   <li>Unzip it into a folder you will keep, such as Documents.</li>
   <li>Open <code>index.html</code> in your browser (double-click it) and follow the short setup.</li>
   <li>In Chrome or Edge, choose that same folder when asked, and your data autosaves there with backups. In other browsers, use <b>Save file</b> and <b>Open a data file</b>.</li>
@@ -99,7 +99,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
 <pre>shasum -a 256 paycheck-planner-1.0.0.zip</pre>
 <h3>Linux</h3>
 <pre>sha256sum paycheck-planner-1.0.0.zip</pre>
-<p>Or download <a href="downloads/SHA256SUMS">SHA256SUMS</a> into the same folder and run <code>sha256sum -c SHA256SUMS</code> (Linux) or <code>shasum -a 256 -c SHA256SUMS</code> (macOS).</p>
+<p>Or download <a href="https://github.com/phluschott/financial-htmlapp/blob/main/docs/downloads/SHA256SUMS" rel="noopener">SHA256SUMS</a> (use the Raw button) into the same folder and run <code>sha256sum -c SHA256SUMS</code> (Linux) or <code>shasum -a 256 -c SHA256SUMS</code> (macOS).</p>
 <p class="note"><b>What this does and doesn’t prove.</b> A matching hash shows your download was not corrupted or altered on the way to you. It cannot, on its own, show that this website was not changed, since the hash is published here too. For stronger assurance, compare it with the copy in the project’s source repository, or rebuild the zip yourself: the build is reproducible, so <code>python3 build.py</code> on the source produces a zip with the same hash. You can also open the unzipped files in a text editor — there are only three small ones.</p>
 
 <h2>Good to know</h2>
@@ -112,7 +112,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
 </ul>
 
 <footer>
-  A visual aid, not financial advice. · Paycheck Planner v1.0.0 · built 2026-10-27 · <a href="downloads/SHA256SUMS">SHA256SUMS</a> · <a href="https://github.com/phluschott/financial-htmlapp">Source code</a>
+  A visual aid, not financial advice. · Paycheck Planner v1.0.0 · built 2026-10-27 · <a href="https://github.com/phluschott/financial-htmlapp/blob/main/docs/downloads/SHA256SUMS" rel="noopener">SHA256SUMS</a> · <a href="https://github.com/phluschott/financial-htmlapp" rel="noopener">Source code</a>
 </footer>
 </div>
 </body>

@@ -12,6 +12,8 @@ import hashlib, pathlib, re, sys, zipfile, datetime
 ROOT = pathlib.Path(__file__).resolve().parent
 VERSION = (ROOT / 'VERSION').read_text().strip()
 NAME = f'paycheck-planner-{VERSION}'
+REPO = 'phluschott/financial-htmlapp'
+BRANCH = 'main'
 OUT = ROOT / 'docs' / 'downloads'
 APP_FILES = {  # path in zip -> source file
     'index.html': ROOT / 'index.html',
@@ -49,6 +51,9 @@ def build_page(zpath):
     tpl = (ROOT / 'site' / 'index.template.html').read_text()
     values = {
         'VERSION': VERSION, 'ZIP': zpath.name, 'SHA256': sha256(zpath),
+        'DOWNLOAD_URL': f'https://github.com/{REPO}/raw/{BRANCH}/docs/downloads/{zpath.name}',
+        'SUMS_URL': f'https://github.com/{REPO}/blob/{BRANCH}/docs/downloads/SHA256SUMS',
+        'REPO_URL': f'https://github.com/{REPO}',
         'SIZE_KB': f'{zpath.stat().st_size / 1024:.0f}', 'DATE': datetime.date.today().isoformat(),
     }
     for k, v in values.items():
