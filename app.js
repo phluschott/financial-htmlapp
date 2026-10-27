@@ -4,8 +4,8 @@
 /* ======================================================================
    Paycheck Planner
    - All money is stored as integer cents.
-   - Everything flows through DB.log (income, allocation, spending, fund, adjust).
-   - Only money that has landed (income entries / starting balances) counts toward Available.
+   - Paychecks come from the income schedules; each paycheck covers the span until the next one.
+   - Recurring items are assigned to the paycheck that precedes their due date (overridable).
    ====================================================================== */
 
 // ---------- utils ----------
@@ -28,7 +28,6 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
-const ACCT_TYPES = ['Checking', 'Savings', 'Cash', 'Other'];
 const FILE = 'finance-data.json';
 
 // ---------- schedules ----------
@@ -69,137 +68,137 @@ let saveErr = '';
 let lastBackup = 0;
 let saveTimer = null;
 const store = { dir: null, dirName: '', pending: null };
-const state = { view: 'home', pcId: null, step: 0 };
+const state = { view: 'plan', month: null, step: 0 };
 
 const newDB = () => ({
-  version: 1, onboarded: false, created: new Date().toISOString(), updated: '',
-  accounts: [], incomes: [], items: [], funds: [], log: []
+  version: 2, onboarded: false, created: new Date().toISOString(), updated: '',
+  incomes: [],   // { id, name, type: fixed|variable, freq, anchor, day2, amount, active }
+  items: [],     // { id, name, category, mode: fixed|ask, amount, lastAmount, freq, anchor, day2, dest, active }
+  funds: [],     // { id, name, purpose }
+  occ: {},       // per-occurrence overrides keyed "itemId:dueDate": { amount, paid, cleared, skip, moveTo, confirmed }
+  pays: [],      // paycheck overrides { key: "incomeId:date", amount, landed } and one-off income { key: null, name, date, amount }
+  extras: [],    // one-off lines { id, headDate, date, name, category, amount, paid, cleared }
+  fundMoves: []  // { id, fundId, headDate, date, amount (+ in / − out), note }
 });
 function migrate(d) {
-  d.version = d.version || 1;
-  for (const k of ['accounts', 'incomes', 'items', 'funds', 'log']) d[k] = d[k] || [];
-  d.onboarded = d.onboarded !== false;
+  const n = newDB();
+  for (const k of Object.keys(n)) if (d[k] === undefined) d[k] = n[k];
+  d.version = 2; d.onboarded = d.onboarded !== false;
   return d;
 }
 
 // ---------- domain ----------
 const byId = (arr, id) => arr.find(x => x.id === id);
-const entry = id => byId(DB.log, id);
-const payAccts = () => DB.accounts.filter(a => a.kind === 'paycheck');
-const destAccts = () => DB.accounts.filter(a => a.kind === 'destination');
-const acctName = id => (byId(DB.accounts, id) || {}).name || '—';
 const itemAmount = it => it.mode === 'fixed' ? (it.amount || 0) : (it.lastAmount ?? it.amount ?? 0);
+const dow = iso => ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'][new Date(toDays(iso) * DAY).getUTCDay()];
+const fmtShort = iso => `${dow(iso)} ${MONTHS[+iso.slice(5, 7) - 1]} ${+iso.slice(8)}`;
+const monthKey = iso => iso.slice(0, 7);
+const monthStart = k => k + '-01';
+const monthShift = (k, n) => { const [y, m] = k.split('-').map(Number); const i = y * 12 + m - 1 + n; return `${Math.floor(i / 12)}-${pad(i % 12 + 1)}`; };
+const monthLabel = k => { const [y, m] = k.split('-'); return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m - 1] + ' ' + y; };
 
-function paychecks() {
-  return DB.log.map((e, i) => [e, i]).filter(x => x[0].type === 'income')
-    .sort((a, b) => b[0].date.localeCompare(a[0].date) || b[1] - a[1]).map(x => x[0]);
-}
-function currentPc() { const p = paychecks(); return p.find(x => x.id === state.pcId) || p[0] || null; }
-const defaultAcct = pc => (pc && pc.accountId) || (payAccts()[0] || {}).id || '';
-
-function acctFigures(a) {
-  const L = DB.log.filter(e => e.accountId === a.id);
-  const inc = sum(L.filter(e => e.type === 'income' && !e.opening), e => e.amount);
-  const adj = sum(L.filter(e => e.type === 'adjust'), e => e.amount);
-  const al = L.filter(e => e.type === 'allocation'), sp = L.filter(e => e.type === 'spending');
-  const fn = sum(L.filter(e => e.type === 'fund'), e => e.amount);
-  const base = (a.start || 0) + inc + adj;
-  return {
-    bank: base - sum(al.filter(e => e.cleared), e => e.amount) - sum(sp.filter(e => e.cleared), e => e.amount),
-    avail: base - sum(al, e => e.amount) - sum(sp, e => e.amount) - fn,
-    held: fn
-  };
-}
-const totalAvailable = () => sum(payAccts(), a => acctFigures(a).avail);
-
-function pcStats(pc) {
-  const es = DB.log.filter(e => e.paycheckId === pc.id);
-  const alloc = es.filter(e => e.type === 'allocation'), sp = es.filter(e => e.type === 'spending'), fn = es.filter(e => e.type === 'fund');
-  const a = sum(alloc, e => e.amount), s = sum(sp, e => e.amount), f = sum(fn, e => e.amount);
-  return { landed: pc.amount, alloc: a, unpaid: sum(alloc.filter(e => !e.paid), e => e.amount), spent: s, funds: f, left: pc.amount - a - s - f };
-}
-const fundBalance = id => sum(DB.log.filter(e => e.type === 'fund' && e.fundId === id), e => e.amount);
-
-function nextPay(afterISO) {
+const activeFixed = () => DB.incomes.filter(i => i.type === 'fixed' && i.active !== false);
+function nextHeadAfter(iso) {
   let best = null;
-  for (const i of DB.incomes) {
-    if (i.type !== 'fixed' || i.active === false) continue;
-    const o = occurrences(i, addDays(afterISO, 1), addDays(afterISO, 400))[0];
+  for (const i of activeFixed()) {
+    const o = occurrences(i, addDays(iso, 1), addDays(iso, 400))[0];
     if (o && (!best || o < best)) best = o;
   }
-  return best;
+  return best || addDays(iso, 14);
 }
-const winStart = pc => (pc.expected && pc.expected < pc.date) ? pc.expected : pc.date;
-const winEnd = pc => nextPay(winStart(pc)) || addDays(winStart(pc), 14);
-const allocKeys = () => new Set(DB.log.filter(e => e.type === 'allocation' && e.key).map(e => e.key));
-
-function suggestions(pc) {
-  const start = winStart(pc), end = winEnd(pc), have = allocKeys(), out = [];
-  for (const it of DB.items) {
-    if (it.active === false) continue;
-    for (const due of occurrences(it, start, end)) {
-      const key = it.id + ':' + due;
-      if (!have.has(key)) out.push({ it, due, key, amount: itemAmount(it) });
+// Paychecks ("heads") dated in [from, to). Each head covers [date, end) — until the next paycheck.
+function computeHeads(from, to) {
+  const byDate = new Map();
+  for (const inc of activeFixed()) {
+    for (const date of occurrences(inc, from, to)) {
+      const key = inc.id + ':' + date, o = DB.pays.find(p => p.key === key);
+      if (!byDate.has(date)) byDate.set(date, []);
+      byDate.get(date).push({ key, incomeId: inc.id, name: inc.name, date, amount: o ? o.amount : inc.amount, landed: !!(o && o.landed), sched: true });
     }
   }
-  return out.sort((a, b) => a.due.localeCompare(b.due) || a.it.name.localeCompare(b.it.name));
+  if (!byDate.size) for (const p of DB.pays) if (!p.key && p.date >= from && p.date < to && !byDate.has(p.date)) byDate.set(p.date, []);
+  const dates = [...byDate.keys()].sort();
+  return dates.map((d, i) => ({ date: d, end: dates[i + 1] || nextHeadAfter(d), pays: byDate.get(d), lines: [], moves: [], extraPays: [] }));
 }
+const nextPayDate = () => (computeHeads(today(), addDays(today(), 420))[0] || {}).date || null;
 
-function nextPreview(pc) {
-  const n1 = nextPay(winStart(pc));
-  if (!n1) return null;
-  const n2 = nextPay(n1), end = n2 || addDays(n1, 14), have = allocKeys();
-  const incs = DB.incomes.filter(i => i.type === 'fixed' && i.active !== false && occurrences(i, n1, addDays(n1, 1)).length);
-  const items = [];
+// Build the plan for a month: every paycheck dated in the month, plus the in-progress one if it started earlier.
+function buildPlan(mk) {
+  const from = monthStart(mk), to = monthStart(monthShift(mk, 1));
+  const H = computeHeads(addDays(from, -60), addDays(to, 60));
+  if (!H.length) return { heads: [], all: H };
+  const at = d => H.find(h => d >= h.date && d < h.end);
+  const lo = H[0].date, hi = H[H.length - 1].end;
   for (const it of DB.items) {
     if (it.active === false) continue;
-    for (const due of occurrences(it, n1, end)) if (!have.has(it.id + ':' + due)) items.push({ it, due, amount: itemAmount(it) });
+    for (const due of occurrences(it, lo, hi)) {
+      const key = it.id + ':' + due, o = DB.occ[key] || {};
+      const h = o.moveTo ? H.find(x => x.date === o.moveTo) : at(due);
+      if (!h) continue;
+      h.lines.push({
+        kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
+        amount: o.amount !== undefined ? o.amount : itemAmount(it), paid: !!o.paid, cleared: !!o.cleared, skip: !!o.skip,
+        needsConfirm: it.mode === 'ask' && !o.confirmed
+      });
+    }
   }
-  items.sort((a, b) => a.due.localeCompare(b.due));
-  const income = sum(incs, i => i.amount || 0), total = sum(items, i => i.amount);
-  return { date: n1, end, incs, income, items, total, free: income - total, overdue: n1 < today() };
+  for (const x of DB.extras) { const h = H.find(h => h.date === x.headDate); if (h) h.lines.push({ kind: 'extra', key: x.id, x, due: x.date, name: x.name, category: x.category, dest: x.dest, amount: x.amount, paid: x.paid, cleared: x.cleared, skip: false }); }
+  for (const m of DB.fundMoves) { const h = H.find(h => h.date === m.headDate); if (h) h.moves.push(m); }
+  for (const p of DB.pays) if (!p.key) { const h = at(p.date); if (h) h.extraPays.push(p); }
+
+  for (const h of H) {
+    const rows = [];
+    h.pays.forEach(p => rows.push({ t: 0, date: h.date, kind: 'pay', pay: p, name: p.name, amount: p.amount }));
+    h.extraPays.forEach(p => rows.push({ t: 0, date: p.date, kind: 'xpay', pay: p, name: p.name, amount: p.amount }));
+    h.moves.forEach(m => { const f = byId(DB.funds, m.fundId) || { name: '?' }; rows.push({ t: m.amount < 0 ? 0 : 1, date: m.date, kind: 'fund', m, name: (m.amount < 0 ? 'From fund: ' : 'To fund: ') + f.name, category: 'Sinking fund', amount: Math.abs(m.amount) }); });
+    h.lines.forEach(l => rows.push({ ...l, t: 1, date: l.due }));
+    // Outgoing rows dated before their paycheck are paid from it, so they sort no earlier than the paycheck date.
+    rows.forEach(r => { r.sd = r.t === 1 && r.date < h.date ? h.date : r.date; });
+    rows.sort((a, b) => a.sd.localeCompare(b.sd) || a.t - b.t || a.name.localeCompare(b.name));
+    let run = 0, income = 0, out = 0, minRun = Infinity, minDate = null;
+    for (const r of rows) {
+      if (r.t === 0) { run += r.amount; income += r.amount; }
+      else if (!r.skip) { run -= r.amount; out += r.amount; }
+      r.run = run;
+      if (r.t === 1 && !r.skip && run < minRun) { minRun = run; minDate = r.date; }
+    }
+    h.rows = rows; h.income = income; h.out = out; h.left = run; h.minRun = minRun; h.minDate = minDate;
+    h.landed = h.pays.length ? h.pays.every(p => p.landed) : true;
+  }
+  const heads = H.filter(h => h.date >= from && h.date < to);
+  let inProgress = null;
+  const np = nextPayDate();
+  if (np && monthKey(np) === mk) {
+    inProgress = H.find(h => h.date < from && h.date <= today() && today() < h.end) || null;
+    if (inProgress) heads.unshift(inProgress);
+  }
+  return { heads, all: H, inProgress, next: np };
 }
 
-function expectedList() {
-  const out = [];
-  for (const inc of DB.incomes) {
-    if (inc.type !== 'fixed' || inc.active === false) continue;
-    const landed = DB.log.filter(e => e.type === 'income' && e.incomeId === inc.id).map(e => e.expected || e.date).sort().pop();
-    const from = landed ? addDays(landed, 1) : addDays(today(), -7);
-    const o = occurrences(inc, from, addDays(from, 400))[0];
-    if (o) out.push({ inc, date: o });
+// ---------- history protection ----------
+// When an amount changes, freeze past occurrences at their old value so earlier months do not change.
+function freezeItem(it) {
+  for (const due of occurrences(it, addDays(today(), -400), today())) {
+    const o = DB.occ[it.id + ':' + due] = DB.occ[it.id + ':' + due] || {};
+    if (o.amount === undefined) o.amount = itemAmount(it);
   }
-  return out.sort((a, b) => a.date.localeCompare(b.date));
+}
+function freezeIncome(inc) {
+  for (const date of occurrences(inc, addDays(today(), -400), today())) {
+    const key = inc.id + ':' + date;
+    if (!DB.pays.some(p => p.key === key)) DB.pays.push({ key, incomeId: inc.id, name: inc.name, date, amount: inc.amount, landed: true });
+  }
 }
 
 // ---------- mutations ----------
 function commit() {
-  dirty = true;
-  saveErr = '';
+  dirty = true; saveErr = '';
   if (store.dir) { clearTimeout(saveTimer); saveTimer = setTimeout(saveNow, 300); }
   render();
 }
-function syncOpening() {
-  const op = DB.log.find(e => e.type === 'income' && e.opening);
-  if (op) op.amount = sum(payAccts(), a => a.start || 0);
-}
-function addAlloc(o) {
-  const e = {
-    id: uid(), type: 'allocation', paycheckId: o.pcId, date: o.due, amount: o.amount, name: o.name, category: o.category,
-    itemId: o.itemId || null, key: o.key || null, accountId: o.accountId, destId: o.destId || null,
-    paid: false, cleared: false, extra: !!o.extra, needsConfirm: !!o.needsConfirm
-  };
-  DB.log.push(e);
-  return e;
-}
-function applySuggestions(pc, list) {
-  for (const s of list) {
-    addAlloc({
-      pcId: pc.id, due: s.due, amount: s.amount, name: s.it.name, category: s.it.category, itemId: s.it.id, key: s.key,
-      accountId: s.it.accountId || defaultAcct(pc), destId: s.it.destId, needsConfirm: s.it.mode === 'ask'
-    });
-  }
-}
+const fundBalance = id => sum(DB.fundMoves.filter(m => m.fundId === id), m => m.amount);
+const setOcc = (key, patch) => { DB.occ[key] = Object.assign(DB.occ[key] || {}, patch); };
+const planMonth = () => state.month || (nextPayDate() ? monthKey(nextPayDate()) : monthKey(today()));
 
 // ---------- crypto ----------
 const b64 = u8 => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
@@ -290,7 +289,7 @@ async function loadText(text) {
     DB = migrate(modal.result.db); ENC = modal.result.enc;
   } else if (obj && Array.isArray(obj.log)) { DB = migrate(obj); ENC = null; }
   else { alert('That file is not a valid data file.'); return false; }
-  dirty = false; state.view = DB.onboarded ? 'home' : 'onboard'; state.step = 0; state.pcId = null;
+  dirty = false; state.view = DB.onboarded ? 'plan' : 'onboard'; state.step = 0; state.month = null; state.scroll = true;
   render();
   return true;
 }
@@ -337,408 +336,6 @@ const money$ = (label, name, cents = 0, extra = '') => fld(label, name, cents ? 
 const dateF = (label, name, val, extra = '') => fld(label, name, val, 'type="date" required', extra);
 const sel = (label, name, opts, val, extra = '') => `<label class="field" ${extra}><span>${label}</span><select name="${name}">${opts.map(o => { const [v, t] = Array.isArray(o) ? o : [o, o]; return `<option value="${esc(v)}"${v == val ? ' selected' : ''}>${esc(t)}</option>`; }).join('')}</select></label>`;
 const chk = (label, name, on, extra = '') => `<label class="check" ${extra}><input type="checkbox" name="${name}"${on ? ' checked' : ''}> ${label}</label>`;
-const acctOpts = () => payAccts().map(a => [a.id, a.name]);
-const pcOpts = () => paychecks().map(p => [p.id, `${fmtDate(p.date)} — ${p.source}`]);
-
-// ---------- entity forms ----------
-function accountForm(id) {
-  const a = id ? byId(DB.accounts, id) : { kind: 'paycheck', type: 'Checking', name: '', start: 0 };
-  return modal({
-    title: id ? 'Edit account' : 'Add account',
-    body: `<p class="help">A <b>paycheck account</b> is where your pay lands and bills come out; it is tracked with a balance. A <b>destination account</b> (like a savings or brokerage account) is untracked: money sent there is just a payment.</p>`
-      + fld('Name', 'name', a.name, 'required')
-      + sel('Kind', 'kind', [['paycheck', 'Paycheck account (tracked)'], ['destination', 'Destination account (untracked)']], a.kind)
-      + sel('Type', 'type', ACCT_TYPES, a.type)
-      + money$('Starting balance — money in this account right now', 'start', a.start, 'data-showif="kind=paycheck"')
-      + chk('Active', 'active', a.active !== false),
-    onSubmit: fd => {
-      const o = id ? a : { id: uid() };
-      Object.assign(o, { name: fd.get('name').trim(), kind: fd.get('kind'), type: fd.get('type'), active: fd.get('active') === 'on', start: fd.get('kind') === 'paycheck' ? parseMoney(fd.get('start')) : 0 });
-      if (!o.name) return 'Name is required.';
-      if (!id) DB.accounts.push(o);
-      syncOpening(); commit();
-    }
-  });
-}
-function incomeForm(id) {
-  const i = id ? byId(DB.incomes, id) : { type: 'fixed', freq: 'biweekly', anchor: today(), amount: 0, name: '', accountId: defaultAcct() };
-  return modal({
-    title: id ? 'Edit income source' : 'Add income source',
-    body: fld('Name (e.g. Main job)', 'name', i.name, 'required')
-      + sel('Type', 'type', [['fixed', 'Fixed — paid on a schedule'], ['variable', 'Variable — I enter it when it lands']], i.type)
-      + sel('How often', 'freq', FREQS.filter(f => f[0] !== 'once'), i.freq, 'data-showif="type=fixed"')
-      + fld('Next pay date', 'anchor', i.anchor, 'type="date"', 'data-showif="type=fixed"')
-      + fld('Second pay day of month (1–31)', 'day2', i.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
-      + money$('Amount per paycheck', 'amount', i.amount, 'data-showif="type=fixed"')
-      + sel('Deposits into', 'accountId', acctOpts(), i.accountId)
-      + chk('Active', 'active', i.active !== false),
-    onSubmit: fd => {
-      const o = id ? i : { id: uid() };
-      Object.assign(o, { name: fd.get('name').trim(), type: fd.get('type'), freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, amount: parseMoney(fd.get('amount')), accountId: fd.get('accountId'), active: fd.get('active') === 'on' });
-      if (!o.name) return 'Name is required.';
-      if (o.type === 'fixed' && !o.amount) return 'Enter the paycheck amount.';
-      if (!id) DB.incomes.push(o);
-      commit();
-    }
-  });
-}
-function itemForm(id) {
-  const it = id ? byId(DB.items, id) : { category: 'Subscription', mode: 'fixed', freq: 'monthly', anchor: today(), amount: 0, name: '', accountId: defaultAcct() };
-  return modal({
-    title: id ? 'Edit recurring item' : 'Add recurring item',
-    body: fld('Name', 'name', it.name, 'required')
-      + sel('Category', 'category', CATS, it.category)
-      + sel('Amount', 'mode', [['fixed', 'Fixed — same every time'], ['ask', 'Varies — I confirm each time']], it.mode)
-      + money$('Typical amount', 'amount', it.mode === 'ask' ? (it.lastAmount ?? it.amount) : it.amount)
-      + sel('How often', 'freq', FREQS, it.freq)
-      + fld('Next due date', 'anchor', it.anchor, 'type="date"')
-      + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
-      + sel('Paid from', 'accountId', acctOpts(), it.accountId)
-      + sel('Destination account', 'destId', [['', '— none —'], ...destAccts().map(a => [a.id, a.name])], it.destId || '', 'data-showif="category=Transfer"')
-      + chk('Active', 'active', it.active !== false),
-    onSubmit: fd => {
-      const o = id ? it : { id: uid() };
-      Object.assign(o, { name: fd.get('name').trim(), category: fd.get('category'), mode: fd.get('mode'), amount: parseMoney(fd.get('amount')), freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, accountId: fd.get('accountId'), destId: fd.get('category') === 'Transfer' ? fd.get('destId') || null : null, active: fd.get('active') === 'on' });
-      if (o.mode === 'ask') o.lastAmount = o.amount;
-      if (!o.name) return 'Name is required.';
-      if (!id) DB.items.push(o);
-      commit();
-    }
-  });
-}
-function fundForm(id) {
-  const f = id ? byId(DB.funds, id) : { name: '', purpose: '' };
-  return modal({
-    title: id ? 'Edit sinking fund' : 'Add sinking fund',
-    body: fld('Name (e.g. New car)', 'name', f.name, 'required') + fld('What is it for?', 'purpose', f.purpose),
-    onSubmit: fd => {
-      const o = id ? f : { id: uid() };
-      Object.assign(o, { name: fd.get('name').trim(), purpose: fd.get('purpose').trim() });
-      if (!o.name) return 'Name is required.';
-      if (!id) DB.funds.push(o);
-      commit();
-    }
-  });
-}
-
-// ---------- paycheck / allocation / spending / fund modals ----------
-function landForm(pre = {}) {
-  const fixed = DB.incomes.filter(i => i.active !== false);
-  const opts = [...fixed.map(i => [i.id, i.name]), ['', 'Other income']];
-  const first = pre.incomeId !== undefined ? pre.incomeId : (fixed[0] ? fixed[0].id : '');
-  const amt = (byId(DB.incomes, first) || {}).amount || 0;
-  return modal({
-    title: 'Income landed',
-    body: '<p class="help">Only money that has actually arrived counts toward Available.</p>'
-      + sel('Source', 'incomeId', opts, first)
-      + (pre.expected ? `<p class="help">Expected ${fmtDate(pre.expected)}.</p>` : '')
-      + dateF('Date it landed', 'date', pre.date || today())
-      + money$('Amount', 'amount', pre.amount ?? amt)
-      + sel('Deposited into', 'accountId', acctOpts(), (byId(DB.incomes, first) || {}).accountId || defaultAcct())
-      + fld('Note (optional)', 'note', '')
-      + chk('Suggest allocations for this paycheck next', 'sugg', true),
-    after: form => form.elements.incomeId.addEventListener('change', () => {
-      const i = byId(DB.incomes, form.elements.incomeId.value);
-      if (i) { form.elements.amount.value = i.amount ? centsIn(i.amount) : ''; form.elements.accountId.value = i.accountId; }
-    }),
-    onSubmit: fd => {
-      const amount = parseMoney(fd.get('amount'));
-      if (amount <= 0) return 'Enter the amount that landed.';
-      const inc = byId(DB.incomes, fd.get('incomeId'));
-      const e = { id: uid(), type: 'income', date: fd.get('date'), expected: pre.expected || null, amount, source: inc ? inc.name : 'Other income', incomeId: inc ? inc.id : null, accountId: fd.get('accountId'), note: fd.get('note').trim() };
-      e.paycheckId = e.id;
-      DB.log.push(e); state.pcId = e.id; state.view = 'home';
-      commit();
-      if (fd.get('sugg') === 'on') setTimeout(() => suggestModal(e.id), 0);
-    }
-  });
-}
-function suggestModal(pcId) {
-  const pc = entry(pcId), list = suggestions(pc);
-  if (!list.length) return modal({ title: 'Suggested allocations', body: `<p>Nothing else is due between ${fmtDate(winStart(pc))} and ${fmtDate(winEnd(pc))}. You can still add items manually.</p>`, submit: null, onSubmit() { } });
-  return modal({
-    title: `Allocate ${money(pc.amount)} — ${fmtDate(pc.date)}`,
-    body: `<p class="help">Items due from ${fmtDate(winStart(pc))} up to the next expected pay date (${fmtDate(winEnd(pc))}). Uncheck anything that belongs to a different paycheck.</p>
-      <table class="sugg"><tbody>${list.map((s, n) => `<tr><td class="chk"><input type="checkbox" name="c${n}" checked></td><td>${esc(s.it.name)}${s.it.mode === 'ask' ? '<span class="chip">varies</span>' : ''}<div class="muted small">${esc(s.it.category)}</div></td><td class="small">${fmtDate(s.due)}</td><td><input type="text" inputmode="decimal" name="a${n}" value="${centsIn(s.amount)}" style="width:100px"></td></tr>`).join('')}</tbody></table>`,
-    submit: 'Create allocations',
-    onSubmit: fd => {
-      const chosen = [];
-      list.forEach((s, n) => { if (fd.get('c' + n) === 'on') chosen.push({ ...s, amount: parseMoney(fd.get('a' + n)) }); });
-      applySuggestions(pc, chosen); commit();
-    }
-  });
-}
-function allocForm(id, pcId) {
-  const a = id ? entry(id) : null;
-  const pc = a ? entry(a.paycheckId) : entry(pcId);
-  const itemOpts = [['', '— custom —'], ...DB.items.filter(i => i.active !== false).map(i => [i.id, i.name])];
-  const v = a || { name: '', category: 'Bill', amount: 0, date: today(), accountId: defaultAcct(pc), paid: false, cleared: false };
-  return modal({
-    title: a ? 'Edit allocation' : 'Add allocation',
-    body: (a ? '' : sel('Recurring item', 'itemId', itemOpts, '') + chk('This is an extra / overpayment on a debt', 'extra', false))
-      + fld('Name', 'name', v.name, 'required') + sel('Category', 'category', CATS, v.category)
-      + money$('Amount', 'amount', v.amount) + dateF('Due date', 'date', v.date)
-      + sel('Paid from', 'accountId', acctOpts(), v.accountId) + sel('Paycheck', 'pcId', pcOpts(), pc.id)
-      + chk('Paid', 'paid', v.paid) + chk('Cleared (shows in bank)', 'cleared', v.cleared),
-    after: form => {
-      if (a) return;
-      form.elements.itemId.addEventListener('change', () => {
-        const it = byId(DB.items, form.elements.itemId.value); if (!it) return;
-        form.elements.name.value = it.name; form.elements.category.value = it.category;
-        form.elements.amount.value = centsIn(itemAmount(it)); form.elements.accountId.value = it.accountId || v.accountId;
-        const nx = occurrences(it, today(), addDays(today(), 400))[0]; if (nx) form.elements.date.value = nx;
-      });
-    },
-    onSubmit: fd => {
-      const amount = parseMoney(fd.get('amount'));
-      if (amount <= 0) return 'Enter an amount.';
-      const paid = fd.get('paid') === 'on', cleared = fd.get('cleared') === 'on';
-      const upd = { name: fd.get('name').trim(), category: fd.get('category'), amount, date: fd.get('date'), accountId: fd.get('accountId'), paycheckId: fd.get('pcId'), paid: paid || cleared, cleared, needsConfirm: false };
-      if (a) {
-        Object.assign(a, upd);
-        const it = byId(DB.items, a.itemId); if (it && it.mode === 'ask' && !a.extra) it.lastAmount = amount;
-      } else {
-        const it = byId(DB.items, fd.get('itemId'));
-        const extra = fd.get('extra') === 'on';
-        const e = addAlloc({ pcId: upd.paycheckId, due: upd.date, amount, name: extra && !/^extra/i.test(upd.name) ? 'Extra: ' + upd.name : upd.name, category: extra ? 'Debt payment' : upd.category, itemId: it ? it.id : null, key: null, accountId: upd.accountId, destId: it ? it.destId : null, extra });
-        e.paid = upd.paid; e.cleared = upd.cleared;
-        if (it && it.mode === 'ask' && !extra) it.lastAmount = amount;
-      }
-      commit();
-    }
-  });
-}
-function spendForm(id) {
-  const s = entry(id);
-  return modal({
-    title: 'Edit spending',
-    body: dateF('Date', 'date', s.date) + money$('Amount', 'amount', s.amount) + fld('Category', 'category', s.category, 'list="cats"') + fld('Note', 'note', s.note)
-      + sel('Account', 'accountId', acctOpts(), s.accountId) + sel('Paycheck', 'pcId', pcOpts(), s.paycheckId) + chk('Cleared', 'cleared', s.cleared),
-    onSubmit: fd => {
-      const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
-      Object.assign(s, { date: fd.get('date'), amount, category: fd.get('category').trim(), note: fd.get('note').trim(), accountId: fd.get('accountId'), paycheckId: fd.get('pcId'), cleared: fd.get('cleared') === 'on' });
-      commit();
-    }
-  });
-}
-function fundMoveForm(fundId, dir) {
-  if (!DB.funds.length) return alert('Add a sinking fund first (Funds page).');
-  const pc = currentPc();
-  return modal({
-    title: 'Move money to / from a sinking fund',
-    body: sel('Fund', 'fundId', DB.funds.map(f => [f.id, `${f.name} (${money(fundBalance(f.id))})`]), fundId || DB.funds[0].id)
-      + sel('Direction', 'dir', [['in', 'Put into fund (reduces Available)'], ['out', 'Pull back out of fund (adds to Available)']], dir || 'in')
-      + money$('Amount', 'amount', 0) + dateF('Date', 'date', today())
-      + sel('Account', 'accountId', acctOpts(), defaultAcct(pc)) + sel('Paycheck', 'pcId', pcOpts(), pc.id) + fld('Note', 'note', ''),
-    onSubmit: fd => {
-      const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
-      const out = fd.get('dir') === 'out';
-      if (out && amount > fundBalance(fd.get('fundId'))) return 'That is more than the fund holds.';
-      DB.log.push({ id: uid(), type: 'fund', fundId: fd.get('fundId'), paycheckId: fd.get('pcId'), accountId: fd.get('accountId'), date: fd.get('date'), amount: out ? -amount : amount, note: fd.get('note').trim() });
-      commit();
-    }
-  });
-}
-function adjustForm(acctId) {
-  const a = byId(DB.accounts, acctId), f = acctFigures(a);
-  return modal({
-    title: `Reconcile — ${a.name}`,
-    body: `<p class="help">Bank balance according to this app: <b>${money(f.bank)}</b>. Enter what your bank actually shows and the app records the difference as an adjustment.</p>` + money$('Actual bank balance', 'actual', f.bank) + fld('Note', 'note', 'Reconciliation'),
-    onSubmit: fd => {
-      const diff = parseMoney(fd.get('actual')) - f.bank;
-      if (diff === 0) return 'Already matches.';
-      DB.log.push({ id: uid(), type: 'adjust', accountId: a.id, date: today(), amount: diff, note: fd.get('note').trim() });
-      commit();
-    }
-  });
-}
-function passwordForm(title, existing) {
-  return modal({
-    title, submit: 'Set password',
-    body: '<p class="help">The data file will be encrypted with AES-256. <b>There is no recovery</b>: if you forget this password, the data cannot be opened.</p>'
-      + '<label class="field"><span>New password (8+ characters)</span><input type="password" name="pw"></label><label class="field"><span>Repeat password</span><input type="password" name="pw2"></label>',
-    onSubmit: async fd => {
-      if (fd.get('pw').length < 8) return 'Use at least 8 characters.';
-      if (fd.get('pw') !== fd.get('pw2')) return 'Passwords do not match.';
-      ENC = await makeEnc(fd.get('pw')); commit();
-    }
-  });
-}
-
-// ---------- views ----------
-function statusHtml() {
-  if (!DB) return '';
-  if (saveErr) return `<span class="pill warn">${esc(saveErr)}</span>`;
-  if (saving) return '<span class="pill">Saving…</span>';
-  if (store.dir) return `<span class="pill ${dirty ? 'warn' : 'ok'}">${dirty ? 'Unsaved' : 'Saved'} · ${esc(store.dirName)}${ENC ? ' · encrypted' : ''}</span>`;
-  return `<span class="pill ${dirty ? 'warn' : ''}">${dirty ? 'Unsaved changes' : 'No changes'}${ENC ? ' · encrypted' : ''}</span> <button data-act="save" class="${dirty ? 'primary' : ''}">Save file</button>`;
-}
-function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
-
-function topbar() {
-  const nav = [['home', 'This paycheck'], ['paychecks', 'Paychecks'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
-  return `<div class="topbar"><span class="brand">Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
-}
-
-function viewStart() {
-  return `<div class="start card"><h2>Paycheck Planner</h2>
-    <p class="muted">A paycheck-by-paycheck planner. Your data stays on this computer in a file you control.</p>
-    ${store.pending ? `<button class="opt primary" data-act="reconnect">Reconnect to “${esc(store.pending.name)}”<small>Continue where you left off</small></button>` : ''}
-    ${fsa ? `<button class="opt" data-act="connect">Choose app folder<small>Chrome / Edge: autosaves ${FILE} (and backups) into the folder you pick</small></button>` : ''}
-    <button class="opt" data-act="openfile">Open a data file…<small>${fsa ? 'Or pick' : 'Pick'} ${FILE} (or a backup)${fsa ? '' : ' — this browser cannot autosave, so use Save file to download updates'}</small></button>
-    <button class="opt" data-act="newdb">Start new<small>Set up accounts, income and bills</small></button>
-    <input type="file" id="filein" accept=".json,application/json" hidden></div>`;
-}
-
-// Sections shared by Setup and the onboarding wizard
-function secAccounts() {
-  const rows = DB.accounts.map(a => `<tr><td>${esc(a.name)}<div class="muted small">${esc(a.type)}${a.active === false ? ' · inactive' : ''}</div></td><td>${a.kind === 'paycheck' ? 'Paycheck account' : 'Destination (untracked)'}</td><td class="num">${a.kind === 'paycheck' ? money(a.start || 0) : ''}</td><td class="num"><button class="link" data-act="edit-acct" data-id="${a.id}">Edit</button><button class="link danger" data-act="del-acct" data-id="${a.id}">Delete</button></td></tr>`).join('');
-  return `<div class="card"><div class="head"><h2>Accounts</h2><button class="primary" data-act="add-acct">+ Add account</button></div>
-    <p class="help">Add the account(s) your pay lands in with today’s balance. Add savings or brokerage accounts as destinations if you send money there.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Kind</th><th class="num">Starting balance</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No accounts yet.</td></tr>'}</tbody></table></div></div>`;
-}
-function secIncomes() {
-  const rows = DB.incomes.map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}</td><td>${i.type === 'fixed' ? FREQS.find(f => f[0] === i.freq)[1] + ' · next ' + fmtDate(i.anchor) : 'Variable'}</td><td>${esc(acctName(i.accountId))}</td><td class="num">${i.type === 'fixed' ? money(i.amount) : '—'}</td><td class="num"><button class="link" data-act="edit-inc" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-inc" data-id="${i.id}">Delete</button></td></tr>`).join('');
-  return `<div class="card"><div class="head"><h2>Income sources</h2><button class="primary" data-act="add-inc">+ Add income</button></div>
-    <p class="help">Fixed income pre-fills when it lands and drives the “next paycheck” preview. Variable income is entered when it arrives. Nothing counts until you confirm it landed.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th>Deposits into</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted">No income sources yet.</td></tr>'}</tbody></table></div></div>`;
-}
-function secItems() {
-  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.destId ? ' → ' + esc(acctName(i.destId)) : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
-  return `<div class="card"><div class="head"><h2>Recurring items</h2><button class="primary" data-act="add-item">+ Add item</button></div>
-    <p class="help">Subscriptions, bills, minimum debt payments, and scheduled transfers to savings. Each is assigned to a paycheck by its due date.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No recurring items yet.</td></tr>'}</tbody></table></div></div>`;
-}
-function secFunds() {
-  const rows = DB.funds.map(f => `<tr><td>${esc(f.name)}<div class="muted small">${esc(f.purpose)}</div></td><td class="num">${money(fundBalance(f.id))}</td><td class="num"><button class="link" data-act="edit-fund" data-id="${f.id}">Edit</button><button class="link danger" data-act="del-fund" data-id="${f.id}">Delete</button></td></tr>`).join('');
-  return `<div class="card"><div class="head"><h2>Sinking funds</h2><button class="primary" data-act="add-fund">+ Add fund</button></div>
-    <p class="help">Named buckets you add money to whenever you choose (new car, house, …). You can pull money back at any time.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th class="num">Balance</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No funds yet.</td></tr>'}</tbody></table></div></div>`;
-}
-
-function viewOnboard() {
-  const steps = ['Welcome', 'Accounts', 'Income', 'Bills & debts', 'Sinking funds', 'Finish'];
-  const s = state.step;
-  const prog = `<div class="steps">${steps.map((t, i) => `<span class="${i === s ? 'on' : i < s ? 'done' : ''}">${i + 1}. ${t}</span>`).join('')}</div>`;
-  let body = '';
-  if (s === 0) {
-    body = `<div class="card"><h2>Welcome</h2>
-      <p>This app is a <b>paycheck planner</b>, not a forecast. You tell it when money actually lands, and it shows what each paycheck has to pay out and what is left to work with.</p>
-      <p class="help">Setup takes a few minutes: your accounts and balances, your income, your recurring bills and debts, and any sinking funds.</p>
-      <h3>Protect your data (optional)</h3>
-      <p class="help">A password encrypts the data file. If you skip it, the file is plain text. You can change this any time in Settings. There is no password recovery.</p>
-      ${ENC ? '<p class="pos">Password set ✓</p>' : '<label class="field"><span>Password (8+ characters, optional)</span><input type="password" id="ob-pw"></label><label class="field"><span>Repeat password</span><input type="password" id="ob-pw2"></label>'}
-      <h3>Where to save</h3>
-      ${store.dir ? `<p class="pos">Autosaving to folder “${esc(store.dirName)}” ✓</p>` : fsa ? '<p class="help">Pick the folder these app files live in and your data autosaves there with automatic backups.</p><button data-act="connect">Choose app folder</button>' : '<p class="help">This browser cannot autosave to a folder, so you will use <b>Save file</b> to download your data and <b>Open a data file</b> to load it next time.</p>'}
-      <div class="error" id="ob-err"></div></div>`;
-  } else if (s === 1) body = secAccounts();
-  else if (s === 2) body = secIncomes();
-  else if (s === 3) body = secItems();
-  else if (s === 4) body = secFunds();
-  else {
-    const total = sum(payAccts(), a => a.start || 0);
-    body = `<div class="card"><h2>All set</h2>
-      <div class="kv"><span>Paycheck accounts</span><b>${payAccts().length}</b></div><div class="kv"><span>Starting balance (available to allocate)</span><b>${money(total)}</b></div>
-      <div class="kv"><span>Income sources</span><b>${DB.incomes.length}</b></div><div class="kv"><span>Recurring items</span><b>${DB.items.length}</b></div><div class="kv"><span>Sinking funds</span><b>${DB.funds.length}</b></div>
-      ${fld('Starting balances are as of', 'asof', today(), 'type="date" id="ob-asof"')}
-      <p class="help">Next you will see which recurring items are due before your next paycheck so you can allocate them from your starting balance.</p></div>`;
-  }
-  const nav = `<div class="actions" style="margin-top:14px">${s > 0 ? '<button data-act="ob-back">Back</button>' : ''}<button class="primary" data-act="ob-next">${s === 5 ? 'Finish setup' : (s === 0 || s === 1) ? 'Next' : 'Next / skip'}</button></div>`;
-  return `<div class="topbar"><span class="brand">Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
-}
-
-function viewHome() {
-  const pc = currentPc(); if (!pc) return '<div class="card">Nothing logged yet.</div>';
-  const st = pcStats(pc), avail = totalAvailable(), latest = paychecks()[0].id === pc.id;
-  const sugg = latest ? suggestions(pc) : [];
-  const allocs = DB.log.filter(e => e.type === 'allocation' && e.paycheckId === pc.id);
-  const spends = DB.log.filter(e => e.type === 'spending' && e.paycheckId === pc.id).sort((a, b) => b.date.localeCompare(a.date));
-  const funds = DB.log.filter(e => e.type === 'fund' && e.paycheckId === pc.id);
-  const groups = CATS.map(c => {
-    const rows = allocs.filter(a => a.category === c).sort((a, b) => a.date.localeCompare(b.date));
-    if (!rows.length) return '';
-    return `<tr class="group"><td colspan="4">${c}</td><td class="num">${money(sum(rows, r => r.amount))}</td><td></td></tr>` + rows.map(a => `<tr class="${a.paid ? 'done' : ''}">
-      <td class="chk"><input type="checkbox" data-chg="tog" data-id="${a.id}" data-f="paid"${a.paid ? ' checked' : ''}></td>
-      <td class="chk"><input type="checkbox" data-chg="tog" data-id="${a.id}" data-f="cleared"${a.cleared ? ' checked' : ''}></td>
-      <td class="name">${esc(a.name)}${a.needsConfirm ? '<span class="chip">confirm amount</span>' : ''}${a.destId ? `<div class="muted small">→ ${esc(acctName(a.destId))}</div>` : ''}</td>
-      <td class="small">${fmtDate(a.date)}</td><td class="num">${money(a.amount)}</td>
-      <td class="num"><button class="link" data-act="edit-alloc" data-id="${a.id}">Edit</button><button class="link danger" data-act="del-entry" data-id="${a.id}">✕</button></td></tr>`).join('');
-  }).join('');
-  const cats = [...new Set(DB.log.filter(e => e.type === 'spending').map(e => e.category).filter(Boolean))];
-  const pv = latest ? nextPreview(pc) : null;
-  const accts = payAccts().map(a => { const f = acctFigures(a); return `<div class="acct"><div class="nm">${esc(a.name)}</div><div class="kv"><span class="muted small">Available</span><b class="${f.avail < 0 ? 'neg' : ''}">${money(f.avail)}</b></div><div class="kv"><span class="muted small">Bank (cleared)</span><span>${money(f.bank)}</span></div>${f.held ? `<div class="kv"><span class="muted small">Held in funds</span><span>${money(f.held)}</span></div>` : ''}</div>`; }).join('');
-
-  return `
-  <div class="card hero"><div class="label">Available to spend</div><div class="big ${avail < 0 ? 'neg' : ''}">${money(avail)}</div>
-    <div class="sub">Everything that has landed, minus everything allocated or spent. Unpaid allocations are already deducted.</div></div>
-  <div class="accts">${accts}</div>
-  <div class="card"><div class="head"><div><h2>${fmtDate(pc.date)} — ${esc(pc.source)}</h2><span class="muted small">${pc.opening ? 'Starting balances' : 'Deposited into ' + esc(acctName(pc.accountId))}</span></div>
-    <label class="field" style="margin:0;min-width:220px"><span>Paycheck</span><select data-chg="pick-pc">${pcOpts().map(([v, t]) => `<option value="${v}"${v === pc.id ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></label></div>
-    <div class="stats"><div class="stat"><div class="k">Landed</div><div class="v">${money(st.landed)}</div></div><div class="stat"><div class="k">Allocated</div><div class="v">${money(st.alloc)}</div></div>
-    <div class="stat"><div class="k">Still unpaid</div><div class="v">${money(st.unpaid)}</div></div><div class="stat"><div class="k">Spent</div><div class="v">${money(st.spent)}</div></div>
-    <div class="stat"><div class="k">To funds</div><div class="v">${money(st.funds)}</div></div><div class="stat"><div class="k">Left from this paycheck</div><div class="v ${st.left < 0 ? 'neg' : 'pos'}">${money(st.left)}</div></div></div></div>
-  ${sugg.length ? `<div class="banner"><span>${sugg.length} recurring item${sugg.length > 1 ? 's' : ''} due before your next paycheck ${sugg.length > 1 ? 'are' : 'is'} not allocated yet.</span><button class="primary" data-act="suggest" data-id="${pc.id}">Review &amp; allocate</button></div>` : ''}
-  <div class="card"><div class="head"><h2>What this paycheck pays out</h2><button data-act="add-alloc" data-id="${pc.id}">+ Add allocation / extra payment</button></div>
-    <div class="tbl-wrap"><table><thead><tr><th class="chk">Paid</th><th class="chk">Cleared</th><th>Item</th><th>Due</th><th class="num">Amount</th><th></th></tr></thead><tbody>${groups || '<tr><td colspan="6" class="muted">No allocations yet.</td></tr>'}</tbody></table></div></div>
-  <div class="card"><div class="head"><h2>Spending log</h2><span class="muted small">Total ${money(st.spent)}</span></div>
-    <div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Category</th><th>Note</th><th class="num">Amount</th><th class="chk">Cleared</th><th></th></tr></thead><tbody>${spends.map(s => `<tr><td class="small">${fmtDate(s.date)}</td><td>${esc(s.category)}</td><td>${esc(s.note)}</td><td class="num">${money(s.amount)}</td><td class="chk"><input type="checkbox" data-chg="tog" data-id="${s.id}" data-f="cleared"${s.cleared ? ' checked' : ''}></td><td class="num"><button class="link" data-act="edit-spend" data-id="${s.id}">Edit</button><button class="link danger" data-act="del-entry" data-id="${s.id}">✕</button></td></tr>`).join('') || '<tr><td colspan="6" class="muted">Nothing spent yet.</td></tr>'}</tbody></table></div>
-    <form class="inline-form" data-form="spend" data-pc="${pc.id}"><input type="date" name="date" value="${today()}" required><input name="amount" inputmode="decimal" placeholder="Amount" required><input name="category" list="cats" placeholder="Category"><input name="note" placeholder="Note"><button class="primary" type="submit">Add</button></form>
-    <datalist id="cats">${cats.map(c => `<option value="${esc(c)}">`).join('')}</datalist></div>
-  <div class="card"><div class="head"><h2>Sinking fund moves</h2><button data-act="fund-move">+ Move money to / from a fund</button></div>
-    ${funds.length ? `<table><tbody>${funds.map(f => `<tr><td class="small">${fmtDate(f.date)}</td><td>${esc((byId(DB.funds, f.fundId) || {}).name || '—')}<div class="muted small">${esc(f.note)}</div></td><td class="num ${f.amount < 0 ? 'pos' : ''}">${f.amount < 0 ? 'out ' : 'in '}${money(Math.abs(f.amount))}</td><td class="num"><button class="link danger" data-act="del-entry" data-id="${f.id}">✕</button></td></tr>`).join('')}</tbody></table>` : '<p class="muted small">No fund moves on this paycheck.</p>'}</div>
-  ${pv ? `<div class="card preview"><div class="head"><h2>Next paycheck <span class="chip proj">projected — not counted in Available</span></h2></div>
-    <p class="help">${pv.overdue ? 'Expected ' + fmtDate(pv.date) + ' and has not been logged yet.' : 'Expected ' + fmtDate(pv.date) + '.'} Covers items due ${fmtDate(pv.date)} – ${fmtDate(addDays(pv.end, -1))}.</p>
-    <div class="kv"><span>Projected income (${pv.incs.map(i => esc(i.name)).join(', ') || 'none'})</span><span>${money(pv.income)}</span></div>
-    ${pv.items.map(i => `<div class="kv small"><span>${esc(i.it.name)} <span class="muted">${fmtDate(i.due)}</span></span><span>−${money(i.amount)}</span></div>`).join('')}
-    <div class="kv total"><span>Projected free money</span><span class="${pv.free < 0 ? 'neg' : 'pos'}">${money(pv.free)}</span></div>
-    <div class="kv small muted"><span>If you spend nothing more, today’s Available carries over</span><span>${money(avail)}</span></div></div>` : ''}`;
-}
-
-function viewPaychecks() {
-  const exp = expectedList();
-  const rows = paychecks().map(p => { const s = pcStats(p); return `<tr><td>${fmtDate(p.date)}</td><td>${esc(p.source)}${p.note ? `<div class="muted small">${esc(p.note)}</div>` : ''}</td><td>${p.opening ? '' : esc(acctName(p.accountId))}</td><td class="num">${money(s.landed)}</td><td class="num">${money(s.alloc)}</td><td class="num">${money(s.spent)}</td><td class="num">${money(s.funds)}</td><td class="num ${s.left < 0 ? 'neg' : ''}">${money(s.left)}</td><td class="num"><button class="link" data-act="open-pc" data-id="${p.id}">Open</button>${p.opening ? '' : `<button class="link danger" data-act="del-pc" data-id="${p.id}">✕</button>`}</td></tr>`; }).join('');
-  return `<div class="card"><div class="head"><h2>Expected income <span class="chip proj">projected — not counted</span></h2><button class="primary" data-act="land">+ Income landed</button></div>
-    <table><tbody>${exp.map(e => `<tr><td>${fmtDate(e.date)}${e.date < today() ? '<span class="chip">overdue</span>' : ''}</td><td>${esc(e.inc.name)}</td><td class="num">${money(e.inc.amount)}</td><td class="num"><button class="link" data-act="land" data-inc="${e.inc.id}" data-exp="${e.date}">It landed</button></td></tr>`).join('') || '<tr><td class="muted">No fixed income sources set up. Variable income: use “+ Income landed”.</td></tr>'}</tbody></table></div>
-  <div class="card"><div class="head"><h2>Paycheck history</h2></div><div class="tbl-wrap"><table><thead><tr><th>Date</th><th>Source</th><th>Account</th><th class="num">Landed</th><th class="num">Allocated</th><th class="num">Spent</th><th class="num">Funds</th><th class="num">Left</th><th></th></tr></thead><tbody>${rows}</tbody></table></div></div>`;
-}
-
-function viewFunds() {
-  const cards = DB.funds.map(f => {
-    const es = DB.log.filter(e => e.type === 'fund' && e.fundId === f.id).sort((a, b) => b.date.localeCompare(a.date));
-    return `<div class="card"><div class="head"><div><h3>${esc(f.name)}</h3><span class="muted small">${esc(f.purpose)}</span></div><div class="big" style="font-size:24px;font-weight:700">${money(fundBalance(f.id))}</div></div>
-      <button data-act="fund-move" data-id="${f.id}" data-dir="in">Put in</button> <button data-act="fund-move" data-id="${f.id}" data-dir="out">Pull back</button> <button class="link" data-act="edit-fund" data-id="${f.id}">Edit</button> <button class="link danger" data-act="del-fund" data-id="${f.id}">Delete</button>
-      <details><summary>Ledger (${es.length})</summary><table><tbody>${es.map(e => `<tr><td class="small">${fmtDate(e.date)}</td><td>${esc(e.note)}</td><td class="num ${e.amount < 0 ? 'neg' : 'pos'}">${e.amount < 0 ? '−' : '+'}${money(Math.abs(e.amount))}</td></tr>`).join('') || '<tr><td class="muted">No activity.</td></tr>'}</tbody></table></details></div>`;
-  }).join('');
-  return `<div class="card"><div class="head"><h2>Sinking funds</h2><div><span class="muted small">Total held ${money(sum(DB.funds, f => fundBalance(f.id)))}</span> <button class="primary" data-act="add-fund">+ Add fund</button></div></div>
-    <p class="help">Putting money in reduces Available; pulling it back adds to Available. Funds have no schedule — move money whenever you choose.</p></div>
-    <div class="funds">${cards || '<div class="card muted">No funds yet.</div>'}</div>`;
-}
-
-function viewSetup() {
-  const accts = payAccts().map(a => `<button class="link" data-act="reconcile" data-id="${a.id}">Reconcile ${esc(a.name)}</button>`).join(' ');
-  return secAccounts() + (accts ? `<p class="muted small" style="margin-top:6px">${accts}</p>` : '') + secIncomes() + secItems();
-}
-
-function viewSettings() {
-  return `<div class="card"><h2>Storage</h2>
-    <p>${store.dir ? `Autosaving to folder <b>${esc(store.dirName)}</b> (<code>${FILE}</code>). Timestamped backups go in <code>backups/</code> (at most one every 10 minutes, newest 50 kept).` : `Not connected to a folder. <b>Save file</b> downloads a timestamped copy of your data; use that file with “Open a data file” next time.`}</p>
-    ${fsa && !store.dir ? '<button data-act="connect">Choose app folder</button> ' : ''}<button data-act="save">${store.dir ? 'Save now' : 'Save file (download)'}</button>
-    <button data-act="backup-copy">Download backup copy</button></div>
-  <div class="card"><h2>Encryption</h2>
-    <p>${ENC ? 'The data file is <b>encrypted</b> (AES-256-GCM, key derived from your password with PBKDF2).' : 'The data file is <b>not encrypted</b>.'} There is no password recovery.</p>
-    ${ENC ? '<button data-act="pw-change">Change password</button> <button class="danger" data-act="pw-remove">Remove password</button>' : '<button class="primary" data-act="pw-set">Set a password</button>'}</div>
-  <div class="card"><h2>Export</h2><p class="muted small">Exports are not encrypted.</p>
-    <button class="primary" data-act="export-xlsx">Export to spreadsheet (.xlsx)</button> <button data-act="export-json">Export data (JSON)</button></div>
-  <div class="card"><h2>Session</h2><button data-act="lock">Lock / close data</button> <button data-act="openfile">Replace with a data file…</button><input type="file" id="filein" accept=".json,application/json" hidden></div>`;
-}
-
-function render() {
-  const app = $('#app');
-  if (!DB) { app.innerHTML = viewStart(); return; }
-  if (state.view === 'onboard') { app.innerHTML = viewOnboard(); return; }
-  const v = { home: viewHome, paychecks: viewPaychecks, funds: viewFunds, setup: viewSetup, settings: viewSettings }[state.view] || viewHome;
-  app.innerHTML = topbar() + v();
-}
 
 // ---------- export ----------
 function crc32(buf) {
@@ -775,25 +372,388 @@ function sheetXml(rows) {
   }).join('')}</row>`).join('');
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cols><col min="1" max="12" width="18" customWidth="1"/></cols><sheetData>${body}</sheetData></worksheet>`;
 }
+// ---------- helpers for forms ----------
+let lastPlan = null;
+const headOptions = () => {
+  const H = (lastPlan && lastPlan.all.length) ? lastPlan.all : computeHeads(addDays(today(), -45), addDays(today(), 120));
+  return H.map(h => [h.date, fmtShort(h.date) + ' paycheck']);
+};
+const nearHeadOptions = () => computeHeads(addDays(today(), -14), addDays(today(), 120)).map(h => [h.date, fmtShort(h.date) + ' paycheck']);
+function upsertPay(p, patch) {
+  let o = DB.pays.find(x => x.key === p.key);
+  if (!o) { o = { key: p.key, incomeId: p.incomeId, name: p.name, date: p.date, amount: p.amount, landed: false }; DB.pays.push(o); }
+  Object.assign(o, patch);
+}
+
+// ---------- entity forms ----------
+function incomeForm(id) {
+  const i = id ? byId(DB.incomes, id) : { type: 'fixed', freq: 'biweekly', anchor: today(), amount: 0, name: '' };
+  return modal({
+    title: id ? 'Edit income source' : 'Add income source',
+    body: fld('Name (e.g. Main job)', 'name', i.name, 'required')
+      + sel('Type', 'type', [['fixed', 'Fixed — paid on a schedule'], ['variable', 'Variable — I enter it when it lands']], i.type)
+      + sel('How often', 'freq', FREQS.filter(f => f[0] !== 'once'), i.freq, 'data-showif="type=fixed"')
+      + fld('A pay date (next one, or any past one)', 'anchor', i.anchor, 'type="date"', 'data-showif="type=fixed"')
+      + fld('Second pay day of month (1–31)', 'day2', i.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
+      + money$('Amount per paycheck', 'amount', i.amount, 'data-showif="type=fixed"')
+      + chk('Active', 'active', i.active !== false),
+    onSubmit: fd => {
+      const o = id ? i : { id: uid() };
+      const amount = parseMoney(fd.get('amount'));
+      if (!fd.get('name').trim()) return 'Name is required.';
+      if (fd.get('type') === 'fixed' && !amount) return 'Enter the paycheck amount.';
+      if (id && o.type === 'fixed' && o.amount !== amount) freezeIncome(o);
+      Object.assign(o, { name: fd.get('name').trim(), type: fd.get('type'), freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, amount, active: fd.get('active') === 'on' });
+      if (!id) DB.incomes.push(o);
+      commit();
+    }
+  });
+}
+function itemForm(id) {
+  const it = id ? byId(DB.items, id) : { category: 'Subscription', mode: 'fixed', freq: 'monthly', anchor: today(), amount: 0, name: '' };
+  return modal({
+    title: id ? 'Edit recurring item' : 'Add recurring item',
+    body: fld('Name', 'name', it.name, 'required')
+      + sel('Category', 'category', CATS, it.category)
+      + sel('Amount', 'mode', [['fixed', 'Fixed — same every time'], ['ask', 'Varies — I confirm each time']], it.mode)
+      + money$('Typical amount', 'amount', it.mode === 'ask' ? (it.lastAmount ?? it.amount) : it.amount)
+      + sel('How often', 'freq', FREQS, it.freq)
+      + fld('Next due date', 'anchor', it.anchor, 'type="date"')
+      + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
+      + fld('Goes to (e.g. Ally Savings)', 'dest', it.dest || '', '', 'data-showif="category=Transfer"')
+      + chk('Active', 'active', it.active !== false),
+    onSubmit: fd => {
+      if (!fd.get('name').trim()) return 'Name is required.';
+      const o = id ? it : { id: uid() }, amount = parseMoney(fd.get('amount'));
+      if (id && (o.mode !== fd.get('mode') || itemAmount(o) !== amount)) freezeItem(o);
+      Object.assign(o, { name: fd.get('name').trim(), category: fd.get('category'), mode: fd.get('mode'), amount, freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, dest: fd.get('category') === 'Transfer' ? fd.get('dest').trim() : '', active: fd.get('active') === 'on' });
+      if (o.mode === 'ask') o.lastAmount = amount;
+      if (!id) DB.items.push(o);
+      commit();
+    }
+  });
+}
+function fundForm(id) {
+  const f = id ? byId(DB.funds, id) : { name: '', purpose: '' };
+  return modal({
+    title: id ? 'Edit sinking fund' : 'Add sinking fund',
+    body: fld('Name (e.g. New car)', 'name', f.name, 'required') + fld('What is it for?', 'purpose', f.purpose),
+    onSubmit: fd => {
+      if (!fd.get('name').trim()) return 'Name is required.';
+      const o = id ? f : { id: uid() };
+      Object.assign(o, { name: fd.get('name').trim(), purpose: fd.get('purpose').trim() });
+      if (!id) DB.funds.push(o);
+      commit();
+    }
+  });
+}
+
+// ---------- plan modals ----------
+function payForm(headDate, key) {
+  const h = lastPlan.all.find(x => x.date === headDate);
+  const p = h.pays.find(x => x.key === key);
+  return modal({
+    title: `${p.name} — ${fmtShort(p.date)}`,
+    body: '<p class="help">Change the amount if this paycheck came in different, and tick Landed once the money has arrived.</p>'
+      + money$('Amount', 'amount', p.amount) + chk('Landed (money has arrived)', 'landed', p.landed)
+      + '<button type="button" class="link" data-act="reset-pay" data-key="' + esc(key) + '">Reset to the scheduled amount</button>',
+    onSubmit: fd => {
+      const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
+      upsertPay(p, { amount, landed: fd.get('landed') === 'on' }); commit();
+    }
+  });
+}
+function extraIncomeForm(headDate, id) {
+  const p = id ? DB.pays.find(x => x.id === id) : { name: 'Extra income', date: headDate >= today() ? headDate : today(), amount: 0 };
+  return modal({
+    title: id ? 'Edit extra income' : 'Add extra / variable income',
+    body: '<p class="help">Income that landed outside your fixed paychecks (side work, refund, gift). It adds to the paycheck period its date falls in.</p>'
+      + fld('Description', 'name', p.name, 'required') + dateF('Date it landed', 'date', p.date) + money$('Amount', 'amount', p.amount)
+      + (id ? `<button type="button" class="link danger" data-act="del-xpay" data-id="${id}">Delete this income</button>` : ''),
+    onSubmit: fd => {
+      const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
+      const o = id ? p : { id: uid(), key: null, incomeId: null, landed: true };
+      Object.assign(o, { name: fd.get('name').trim() || 'Extra income', date: fd.get('date'), amount });
+      if (!id) DB.pays.push(o);
+      commit();
+    }
+  });
+}
+function lineForm(headDate, key) {
+  const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
+  if (l.kind === 'item') {
+    const natural = (lastPlan.all.find(x => l.due >= x.date && l.due < x.end) || h).date;
+    return modal({
+      title: `${l.name} — due ${fmtShort(l.due)}`,
+      body: money$(l.needsConfirm ? 'Amount this time (confirm)' : 'Amount', 'amount', l.amount)
+        + chk('Paid', 'paid', l.paid) + chk('Cleared (shows in the bank)', 'cleared', l.cleared)
+        + sel('Pay this from', 'moveTo', headOptions(), h.date)
+        + chk('Skip this time (not due / handled elsewhere)', 'skip', l.skip),
+      onSubmit: fd => {
+        const amount = parseMoney(fd.get('amount')); if (amount < 0) return 'Enter an amount.';
+        const cleared = fd.get('cleared') === 'on', paid = fd.get('paid') === 'on' || cleared, mv = fd.get('moveTo');
+        setOcc(l.key, { amount, paid, cleared, confirmed: true, skip: fd.get('skip') === 'on', moveTo: mv === natural ? undefined : mv });
+        if (l.it.mode === 'ask') l.it.lastAmount = amount;
+        commit();
+      }
+    });
+  }
+  const x = l.x;
+  return modal({
+    title: 'Edit ' + x.name,
+    body: fld('Name', 'name', x.name, 'required') + sel('Category', 'category', CATS, x.category) + (x.category === 'Transfer' ? fld('Goes to', 'dest', x.dest || '') : '')
+      + money$('Amount', 'amount', x.amount) + dateF('Date', 'date', x.date) + sel('Pay this from', 'headDate', headOptions(), x.headDate)
+      + chk('Paid', 'paid', x.paid) + chk('Cleared', 'cleared', x.cleared)
+      + `<button type="button" class="link danger" data-act="del-extra" data-id="${x.id}">Delete this line</button>`,
+    onSubmit: fd => {
+      const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
+      const cleared = fd.get('cleared') === 'on';
+      Object.assign(x, { name: fd.get('name').trim(), category: fd.get('category'), dest: fd.get('dest') ? fd.get('dest').trim() : x.dest, amount, date: fd.get('date'), headDate: fd.get('headDate'), paid: fd.get('paid') === 'on' || cleared, cleared });
+      commit();
+    }
+  });
+}
+function addLineForm(headDate, presetAmount = 0) {
+  const debts = DB.items.filter(i => i.category === 'Debt payment' && i.active !== false);
+  return modal({
+    title: 'Add to this paycheck',
+    body: sel('What is it?', 'kind', [['debt', 'Extra payment on a debt'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
+      + sel('Which debt', 'itemId', [['', '— other —'], ...debts.map(d => [d.id, d.name])], '', 'data-showif="kind=debt"')
+      + fld('Name', 'name', '', '', 'data-showif="kind=debt|transfer|bill"')
+      + fld('Goes to (e.g. Ally Savings)', 'dest', '', '', 'data-showif="kind=transfer"')
+      + sel('Fund', 'fundId', DB.funds.map(f => [f.id, `${f.name} (${money(fundBalance(f.id))})`]), '', 'data-showif="kind=fundin|fundout"')
+      + money$('Amount', 'amount', presetAmount) + dateF('Date', 'date', headDate >= today() ? headDate : today()) + fld('Note (optional)', 'note', '', '', 'data-showif="kind=fundin|fundout"')
+      + sel('Pay this from', 'headDate', headOptions(), headDate),
+    after: form => form.elements.itemId.addEventListener('change', () => {
+      const it = byId(DB.items, form.elements.itemId.value); if (it) form.elements.name.value = 'Extra: ' + it.name;
+    }),
+    onSubmit: fd => {
+      const amount = parseMoney(fd.get('amount')), kind = fd.get('kind'); if (amount <= 0) return 'Enter an amount.';
+      if (kind === 'fundin' || kind === 'fundout') {
+        const fid = fd.get('fundId'); if (!fid) return 'Add a sinking fund first (Sinking funds page).';
+        if (kind === 'fundout' && amount > fundBalance(fid)) return 'That is more than the fund holds.';
+        DB.fundMoves.push({ id: uid(), fundId: fid, headDate: fd.get('headDate'), date: fd.get('date'), amount: kind === 'fundout' ? -amount : amount, note: fd.get('note').trim() });
+      } else {
+        let name = fd.get('name').trim(); if (!name) return 'Give it a name.';
+        if (kind === 'debt' && fd.get('itemId') && !/^extra/i.test(name)) name = 'Extra: ' + name;
+        DB.extras.push({ id: uid(), headDate: fd.get('headDate'), date: fd.get('date'), name, category: kind === 'debt' ? 'Debt payment' : kind === 'transfer' ? 'Transfer' : 'Bill', dest: kind === 'transfer' ? fd.get('dest').trim() : '', amount, paid: false, cleared: false });
+      }
+      commit();
+    }
+  });
+}
+function fundMoveForm(fundId, dir) {
+  if (!DB.funds.length) return alert('Add a sinking fund first.');
+  const opts = nearHeadOptions(), nx = nextPayDate();
+  return modal({
+    title: 'Move money to / from a sinking fund',
+    body: sel('Fund', 'fundId', DB.funds.map(f => [f.id, `${f.name} (${money(fundBalance(f.id))})`]), fundId || DB.funds[0].id)
+      + sel('Direction', 'dir', [['in', 'Put into fund (comes out of the paycheck)'], ['out', 'Pull back out of fund (adds to the paycheck)']], dir || 'in')
+      + money$('Amount', 'amount', 0) + dateF('Date', 'date', nx && nx > today() ? nx : today()) + sel('Applies to', 'headDate', opts, nx || (opts[0] || [])[0]) + fld('Note', 'note', ''),
+    onSubmit: fd => {
+      const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
+      const out = fd.get('dir') === 'out';
+      if (out && amount > fundBalance(fd.get('fundId'))) return 'That is more than the fund holds.';
+      if (!fd.get('headDate')) return 'Add an income source first so there is a paycheck to apply this to.';
+      DB.fundMoves.push({ id: uid(), fundId: fd.get('fundId'), headDate: fd.get('headDate'), date: fd.get('date'), amount: out ? -amount : amount, note: fd.get('note').trim() });
+      commit();
+    }
+  });
+}
+function passwordForm(title) {
+  return modal({
+    title, submit: 'Set password',
+    body: '<p class="help">The data file will be encrypted with AES-256. <b>There is no recovery</b>: if you forget this password, the data cannot be opened.</p>'
+      + '<label class="field"><span>New password (8+ characters)</span><input type="password" name="pw"></label><label class="field"><span>Repeat password</span><input type="password" name="pw2"></label>',
+    onSubmit: async fd => {
+      if (fd.get('pw').length < 8) return 'Use at least 8 characters.';
+      if (fd.get('pw') !== fd.get('pw2')) return 'Passwords do not match.';
+      ENC = await makeEnc(fd.get('pw')); commit();
+    }
+  });
+}
+
+// ---------- views ----------
+function statusHtml() {
+  if (!DB) return '';
+  if (saveErr) return `<span class="pill warn">${esc(saveErr)}</span>`;
+  if (saving) return '<span class="pill">Saving…</span>';
+  if (store.dir) return `<span class="pill ${dirty ? 'warn' : 'ok'}">${dirty ? 'Unsaved' : 'Saved'} · ${esc(store.dirName)}${ENC ? ' · encrypted' : ''}</span>`;
+  return `<span class="pill ${dirty ? 'warn' : ''}">${dirty ? 'Unsaved changes' : 'No changes'}${ENC ? ' · encrypted' : ''}</span> <button data-act="save" class="${dirty ? 'primary' : ''}">Save file</button>`;
+}
+function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
+function topbar() {
+  const nav = [['plan', 'Plan'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
+  return `<div class="topbar"><span class="brand">Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
+}
+function viewStart() {
+  return `<div class="start card"><h2>Paycheck Planner</h2>
+    <p class="muted">See what each paycheck has to pay, when, and what is left to play with. Your data stays on this computer in a file you control.</p>
+    ${store.pending ? `<button class="opt primary" data-act="reconnect">Reconnect to “${esc(store.pending.name)}”<small>Continue where you left off</small></button>` : ''}
+    ${fsa ? `<button class="opt" data-act="connect">Choose app folder<small>Chrome / Edge: autosaves ${FILE} (and backups) into the folder you pick</small></button>` : ''}
+    <button class="opt" data-act="openfile">Open a data file…<small>${fsa ? 'Or pick' : 'Pick'} ${FILE} (or a backup)${fsa ? '' : ' — this browser cannot autosave, so use Save file to download updates'}</small></button>
+    <button class="opt" data-act="newdb">Start new<small>Set up your income and bills</small></button>
+    <input type="file" id="filein" accept=".json,application/json" hidden></div>`;
+}
+
+function secIncomes() {
+  const rows = DB.incomes.map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}</td><td>${i.type === 'fixed' ? FREQS.find(f => f[0] === i.freq)[1] : 'Variable — entered when it lands'}</td><td class="num">${i.type === 'fixed' ? money(i.amount) : '—'}</td><td class="num"><button class="link" data-act="edit-inc" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-inc" data-id="${i.id}">Delete</button></td></tr>`).join('');
+  return `<div class="card"><div class="head"><h2>Income</h2><button class="primary" data-act="add-inc">+ Add income</button></div>
+    <p class="help">Fixed income creates your paychecks automatically (for example every other Friday). Variable income is added on the Plan page when it lands.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No income yet.</td></tr>'}</tbody></table></div></div>`;
+}
+function secItems() {
+  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
+  return `<div class="card"><div class="head"><h2>Bills, subscriptions &amp; debts</h2><button class="primary" data-act="add-item">+ Add item</button></div>
+    <p class="help">Everything that pulls money on a schedule: subscriptions, bills, credit card minimums, mortgage, and regular transfers to savings. Each lands on the paycheck that comes before its due date.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Nothing added yet.</td></tr>'}</tbody></table></div></div>`;
+}
+function secFunds() {
+  const rows = DB.funds.map(f => `<tr><td>${esc(f.name)}<div class="muted small">${esc(f.purpose)}</div></td><td class="num">${money(fundBalance(f.id))}</td><td class="num"><button class="link" data-act="edit-fund" data-id="${f.id}">Edit</button><button class="link danger" data-act="del-fund" data-id="${f.id}">Delete</button></td></tr>`).join('');
+  return `<div class="card"><div class="head"><h2>Sinking funds</h2><button class="primary" data-act="add-fund">+ Add fund</button></div>
+    <p class="help">Named buckets you add money to whenever you choose (new car, house, …) and can pull back from. They have no schedule.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th class="num">Balance</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="3" class="muted">No funds yet.</td></tr>'}</tbody></table></div></div>`;
+}
+
+function viewOnboard() {
+  const steps = ['Welcome', 'Income', 'Bills & debts', 'Sinking funds', 'Finish'];
+  const s = state.step;
+  const prog = `<div class="steps">${steps.map((t, i) => `<span class="${i === s ? 'on' : i < s ? 'done' : ''}">${i + 1}. ${t}</span>`).join('')}</div>`;
+  let body = '';
+  if (s === 0) {
+    body = `<div class="card"><h2>Welcome</h2>
+      <p>This app answers one question: <b>“I have a paycheck coming — what do I need to pay out of it, and what is left?”</b> Each paycheck gets its own card listing the payments due until the next paycheck, in date order.</p>
+      <p class="help">Setup takes a few minutes: your income, the things that pull money on a schedule, and any sinking funds. No account balances are tracked.</p>
+      <h3>Protect your data (optional)</h3>
+      <p class="help">A password encrypts the data file. If you skip it, the file is plain text. You can change this any time in Settings. There is no password recovery.</p>
+      ${ENC ? '<p class="pos">Password set ✓</p>' : '<label class="field"><span>Password (8+ characters, optional)</span><input type="password" id="ob-pw"></label><label class="field"><span>Repeat password</span><input type="password" id="ob-pw2"></label>'}
+      <h3>Where to save</h3>
+      ${store.dir ? `<p class="pos">Autosaving to folder “${esc(store.dirName)}” ✓</p>` : fsa ? '<p class="help">Pick the folder these app files live in and your data autosaves there with automatic backups.</p><button data-act="connect">Choose app folder</button>' : '<p class="help">This browser cannot autosave to a folder, so use <b>Save file</b> to download your data and <b>Open a data file</b> to load it next time.</p>'}
+      <div class="error" id="ob-err"></div></div>`;
+  } else if (s === 1) body = secIncomes();
+  else if (s === 2) body = secItems();
+  else if (s === 3) body = secFunds();
+  else body = `<div class="card"><h2>All set</h2>
+      <div class="kv"><span>Income sources</span><b>${DB.incomes.length}</b></div><div class="kv"><span>Recurring items</span><b>${DB.items.length}</b></div><div class="kv"><span>Sinking funds</span><b>${DB.funds.length}</b></div>
+      <p class="help">You will land on the Plan page, with your next paycheck highlighted.</p></div>`;
+  const nav = `<div class="actions" style="margin-top:14px">${s > 0 ? '<button data-act="ob-back">Back</button>' : ''}<button class="primary" data-act="ob-next">${s === 4 ? 'Finish setup' : s === 0 ? 'Next' : 'Next / skip'}</button></div>`;
+  return `<div class="topbar"><span class="brand">Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
+}
+
+function rowHtml(h, r) {
+  const d = fmtShort(r.date);
+  if (r.kind === 'pay' || r.kind === 'xpay') {
+    const landed = r.kind === 'xpay' || r.pay.landed;
+    return `<tr class="inc"><td class="small">${d}</td><td>${esc(r.name)} <span class="chip ${landed ? 'ok' : 'proj'}">${landed ? 'landed' : r.date > today() ? 'expected' : 'confirm landed'}</span></td>
+      <td class="num pos">+${money(r.amount)}</td><td class="num">${money(r.run)}</td>
+      <td class="chk">${r.kind === 'pay' ? `<input type="checkbox" title="Landed" data-chg="landed" data-head="${h.date}" data-key="${esc(r.pay.key)}"${r.pay.landed ? ' checked' : ''}>` : ''}</td><td class="chk"></td>
+      <td class="num"><button class="link" data-act="${r.kind === 'pay' ? 'edit-pay' : 'edit-xpay'}" data-head="${h.date}" data-key="${esc(r.pay.key || '')}" data-id="${r.pay.id || ''}">Edit</button></td></tr>`;
+  }
+  if (r.kind === 'fund') {
+    return `<tr class="${r.t === 0 ? 'inc' : ''}"><td class="small">${d}</td><td>${esc(r.name)}${r.m.note ? `<div class="muted small">${esc(r.m.note)}</div>` : ''}</td><td class="num ${r.t === 0 ? 'pos' : ''}">${r.t === 0 ? '+' : '−'}${money(r.amount)}</td><td class="num">${money(r.run)}</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link danger" data-act="del-move" data-id="${r.m.id}">✕</button></td></tr>`;
+  }
+  return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div></td>
+    <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
+    <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
+    <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>
+    <td class="num"><button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
+}
+
+function checkCard(h, plan) {
+  const isNext = h.date === plan.next, t = today();
+  const cur = h.date <= t && t < h.end;
+  const badge = isNext ? '<span class="badge next">Next paycheck</span>' : (plan.inProgress === h ? '<span class="badge">Still in progress</span>' : cur ? '<span class="badge">Current period</span>' : '');
+  const n = h.rows.filter(r => r.t === 1 && !r.skip).length;
+  return `<div class="card check${isNext ? ' next' : ''}" id="chk-${h.date}">
+    <div class="head"><div><h2>${fmtShort(h.date)} paycheck ${badge}</h2><span class="muted small">Pays for ${fmtDate(h.date)} – ${fmtDate(addDays(h.end, -1))} · ${n} payment${n === 1 ? '' : 's'}</span></div>
+      <div class="leftbox"><div class="muted small">Left to play with</div><div class="big2 ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div></div></div>
+    ${h.minRun < 0 ? `<div class="banner err small">Runs short by ${money(-h.minRun)} on ${fmtShort(h.minDate)} unless something moves.</div>` : ''}
+    <div class="tbl-wrap"><table class="tl"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Left after</th><th class="chk">Paid</th><th class="chk">Clrd</th><th></th></tr></thead><tbody>${h.rows.map(r => rowHtml(h, r)).join('')}</tbody></table></div>
+    <div class="actions" style="justify-content:flex-start">
+      <button data-act="add-line" data-head="${h.date}">+ Add payment / allocation</button>
+      ${h.left > 0 ? `<button class="primary" data-act="add-line" data-head="${h.date}" data-amt="${h.left}">Allocate what’s left (${money(h.left)})</button>` : ''}
+      <button class="link" data-act="add-xpay" data-head="${h.date}">+ Extra income</button></div></div>`;
+}
+
+function viewPlan() {
+  const mk = planMonth(), plan = buildPlan(mk); lastPlan = plan;
+  const nav = `<div class="monthnav"><button data-act="month" data-d="-1">‹</button><h2>${monthLabel(mk)}</h2><button data-act="month" data-d="1">›</button><button class="link" data-act="month-today">Jump to next paycheck</button></div>`;
+  if (!plan.all.length) return nav + `<div class="card"><p>No paychecks to show. Add a <b>fixed income source</b> in Setup and your paychecks appear here automatically.</p><button class="primary" data-act="nav" data-v="setup">Go to Setup</button></div>`;
+  const inMonth = plan.heads.filter(h => h !== plan.inProgress);
+  const income = sum(inMonth, h => h.income), out = sum(inMonth, h => h.out);
+  const landed = sum(inMonth, h => sum(h.rows.filter(r => r.t === 0 && (r.kind !== 'pay' || r.pay.landed)), r => r.amount));
+  const cats = {};
+  inMonth.forEach(h => h.rows.filter(r => r.t === 1 && !r.skip).forEach(r => { cats[r.category] = (cats[r.category] || 0) + r.amount; }));
+  const catRows = Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<span class="catchip">${esc(c)} <b>${money(v)}</b>${income ? ` <span class="muted">${Math.round(v / income * 100)}%</span>` : ''}</span>`).join('');
+  const summary = `<div class="card"><div class="stats" style="margin-top:0">
+      <div class="stat"><div class="k">Income this month</div><div class="v">${money(income)}</div><div class="muted small">${landed >= income ? 'all landed' : `${money(landed)} landed · ${money(income - landed)} expected`}</div></div>
+      <div class="stat"><div class="k">Going out</div><div class="v">${money(out)}</div></div>
+      <div class="stat"><div class="k">Left to play with</div><div class="v ${income - out < 0 ? 'neg' : 'pos'}">${money(income - out)}</div></div></div>
+      ${catRows ? `<div class="cats">${catRows}</div>` : ''}</div>`;
+  return nav + summary + (plan.heads.length ? plan.heads.map(h => checkCard(h, plan)).join('') : '<div class="card muted">No paychecks fall in this month.</div>');
+}
+
+function viewFunds() {
+  const cards = DB.funds.map(f => {
+    const es = DB.fundMoves.filter(m => m.fundId === f.id).sort((a, b) => b.date.localeCompare(a.date));
+    return `<div class="card"><div class="head"><div><h3>${esc(f.name)}</h3><span class="muted small">${esc(f.purpose)}</span></div><div class="big2">${money(fundBalance(f.id))}</div></div>
+      <button data-act="fund-move" data-id="${f.id}" data-dir="in">Put in</button> <button data-act="fund-move" data-id="${f.id}" data-dir="out">Pull back</button> <button class="link" data-act="edit-fund" data-id="${f.id}">Edit</button> <button class="link danger" data-act="del-fund" data-id="${f.id}">Delete</button>
+      <details><summary>History (${es.length})</summary><table><tbody>${es.map(e => `<tr><td class="small">${fmtDate(e.date)}</td><td>${esc(e.note)}</td><td class="num ${e.amount < 0 ? 'neg' : 'pos'}">${e.amount < 0 ? '−' : '+'}${money(Math.abs(e.amount))}</td></tr>`).join('') || '<tr><td class="muted">No activity.</td></tr>'}</tbody></table></details></div>`;
+  }).join('');
+  return `<div class="card"><div class="head"><h2>Sinking funds</h2><div><span class="muted small">Total held ${money(sum(DB.funds, f => fundBalance(f.id)))}</span> <button class="primary" data-act="add-fund">+ Add fund</button></div></div>
+    <p class="help">Putting money in comes out of a paycheck; pulling it back adds to one. There is no schedule — move money whenever you choose. You can also do it from a paycheck card on the Plan page.</p></div>
+    <div class="funds">${cards || '<div class="card muted">No funds yet.</div>'}</div>`;
+}
+function viewSetup() { return secIncomes() + secItems(); }
+function viewSettings() {
+  return `<div class="card"><h2>Storage</h2>
+    <p>${store.dir ? `Autosaving to folder <b>${esc(store.dirName)}</b> (<code>${FILE}</code>). Timestamped backups go in <code>backups/</code> (at most one every 10 minutes, newest 50 kept).` : `Not connected to a folder. <b>Save file</b> downloads a timestamped copy of your data; use that file with “Open a data file” next time.`}</p>
+    ${fsa && !store.dir ? '<button data-act="connect">Choose app folder</button> ' : ''}<button data-act="save">${store.dir ? 'Save now' : 'Save file (download)'}</button>
+    <button data-act="backup-copy">Download backup copy</button></div>
+  <div class="card"><h2>Encryption</h2>
+    <p>${ENC ? 'The data file is <b>encrypted</b> (AES-256-GCM, key derived from your password with PBKDF2).' : 'The data file is <b>not encrypted</b>.'} There is no password recovery.</p>
+    ${ENC ? '<button data-act="pw-change">Change password</button> <button class="danger" data-act="pw-remove">Remove password</button>' : '<button class="primary" data-act="pw-set">Set a password</button>'}</div>
+  <div class="card"><h2>Export</h2><p class="muted small">Exports are not encrypted. The spreadsheet contains the month shown on the Plan page, plus your income, items and funds.</p>
+    <button class="primary" data-act="export-xlsx">Export to spreadsheet (.xlsx)</button> <button data-act="export-json">Export data (JSON)</button></div>
+  <div class="card"><h2>Session</h2><button data-act="lock">Lock / close data</button> <button data-act="openfile">Replace with a data file…</button><input type="file" id="filein" accept=".json,application/json" hidden></div>`;
+}
+
+function render() {
+  const app = $('#app');
+  if (!DB) { app.innerHTML = viewStart(); return; }
+  if (state.view === 'onboard') { app.innerHTML = viewOnboard(); return; }
+  const v = { plan: viewPlan, funds: viewFunds, setup: viewSetup, settings: viewSettings }[state.view] || viewPlan;
+  app.innerHTML = topbar() + v();
+  if (state.view === 'plan' && state.scroll) {
+    state.scroll = false;
+    const el = lastPlan && lastPlan.next && document.getElementById('chk-' + lastPlan.next);
+    if (el) el.scrollIntoView({ block: 'start' });
+  }
+}
+
 function buildXlsx() {
-  const d = c => Math.round(c) / 100;
-  const sheets = [];
-  sheets.push(['Summary', [['Paycheck date', 'Source', 'Landed', 'Allocated', 'Unpaid', 'Spent', 'To funds', 'Left'],
-    ...paychecks().map(p => { const s = pcStats(p); return [p.date, p.source, d(s.landed), d(s.alloc), d(s.unpaid), d(s.spent), d(s.funds), d(s.left)]; }), [], ['Available to spend', '', d(totalAvailable())]]]);
-  sheets.push(['Accounts', [['Account', 'Kind', 'Type', 'Starting balance', 'Bank (cleared)', 'Available'], ...DB.accounts.map(a => { const f = a.kind === 'paycheck' ? acctFigures(a) : null; return [a.name, a.kind, a.type, d(a.start || 0), f ? d(f.bank) : '', f ? d(f.avail) : '']; })]]);
-  const label = e => e.type === 'income' ? e.source : e.type === 'fund' ? (byId(DB.funds, e.fundId) || {}).name : e.type === 'adjust' ? 'Adjustment' : e.name || e.category;
-  const sign = e => e.type === 'income' || e.type === 'adjust' ? e.amount : -e.amount;
-  sheets.push(['Ledger', [['Date', 'Type', 'Paycheck', 'Account', 'Description', 'Category', 'Amount (+in / −out)', 'Paid', 'Cleared', 'Note'],
-    ...[...DB.log].sort((a, b) => a.date.localeCompare(b.date)).map(e => [e.date, e.type, e.paycheckId ? ((entry(e.paycheckId) || {}).date || '') : '', acctName(e.accountId), label(e), e.category || '', d(sign(e)), e.type === 'allocation' ? (e.paid ? 'Y' : 'N') : '', e.cleared ? 'Y' : (e.type === 'allocation' || e.type === 'spending' ? 'N' : ''), e.note || ''])]]);
-  sheets.push(['Recurring Items', [['Name', 'Category', 'Amount', 'Varies', 'Frequency', 'Next due', 'Paid from', 'Destination', 'Active'], ...DB.items.map(i => [i.name, i.category, d(itemAmount(i)), i.mode === 'ask' ? 'Y' : 'N', i.freq, i.anchor, acctName(i.accountId), i.destId ? acctName(i.destId) : '', i.active === false ? 'N' : 'Y'])]]);
-  sheets.push(['Income Sources', [['Name', 'Type', 'Frequency', 'Next pay', 'Amount', 'Deposits into'], ...DB.incomes.map(i => [i.name, i.type, i.type === 'fixed' ? i.freq : '', i.type === 'fixed' ? i.anchor : '', d(i.amount || 0), acctName(i.accountId)])]]);
+  const d = c => Math.round(c) / 100, mk = planMonth(), plan = buildPlan(mk), sheets = [];
+  const inMonth = plan.heads.filter(h => h !== plan.inProgress);
+  const planRows = [['Paycheck', 'Date', 'What', 'Category', 'Goes to', 'Amount (+in / −out)', 'Left after', 'Paid', 'Cleared']];
+  for (const h of plan.heads) for (const r of h.rows) {
+    planRows.push([h.date, r.date, r.name, r.category || (r.t === 0 ? 'Income' : ''), r.dest || '', r.skip ? 0 : d(r.t === 0 ? r.amount : -r.amount), r.skip ? '' : d(r.run),
+      r.t === 1 ? (r.paid ? 'Y' : 'N') : (r.kind === 'pay' ? (r.pay.landed ? 'Landed' : 'Expected') : ''), r.t === 1 && r.kind !== 'fund' ? (r.cleared ? 'Y' : 'N') : '']);
+  }
+  planRows.push([], ['Left to play with by paycheck']);
+  for (const h of plan.heads) planRows.push([h.date, '', 'Income ' + d(h.income) + ' · Out ' + d(h.out), '', '', d(h.left)]);
+  planRows.push(['Month total left', '', '', '', '', d(sum(inMonth, h => h.left))]);
+  sheets.push([monthLabel(mk).slice(0, 31), planRows]);
+  sheets.push(['Recurring Items', [['Name', 'Category', 'Amount', 'Varies', 'Frequency', 'Next due', 'Goes to', 'Active'], ...DB.items.map(i => [i.name, i.category, d(itemAmount(i)), i.mode === 'ask' ? 'Y' : 'N', i.freq, i.anchor, i.dest || '', i.active === false ? 'N' : 'Y'])]]);
+  sheets.push(['Income', [['Name', 'Type', 'Frequency', 'Pay date', 'Amount'], ...DB.incomes.map(i => [i.name, i.type, i.type === 'fixed' ? i.freq : '', i.type === 'fixed' ? i.anchor : '', d(i.amount || 0)])]]);
   sheets.push(['Sinking Funds', [['Fund', 'Purpose', 'Balance'], ...DB.funds.map(f => [f.name, f.purpose, d(fundBalance(f.id))])]]);
+  sheets.push(['Fund History', [['Date', 'Fund', 'Amount (+in / −out)', 'Note'], ...[...DB.fundMoves].sort((a, b) => a.date.localeCompare(b.date)).map(m => [m.date, (byId(DB.funds, m.fundId) || {}).name || '', d(m.amount), m.note || ''])]]);
   const files = [
     { name: '[Content_Types].xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_, i) => `<Override PartName="/xl/worksheets/sheet${i + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>` },
     { name: '_rels/.rels', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>' },
     { name: 'xl/workbook.xml', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets>${sheets.map((s, i) => `<sheet name="${xmlEsc(s[0])}" sheetId="${i + 1}" r:id="rId${i + 1}"/>`).join('')}</sheets></workbook>` },
     { name: 'xl/_rels/workbook.xml.rels', data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${sheets.map((_, i) => `<Relationship Id="rId${i + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet${i + 1}.xml"/>`).join('')}<Relationship Id="rId${sheets.length + 1}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>` },
-    { name: 'xl/styles.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs></styleSheet>' },
+    { name: 'xl/styles.xml', data: '<?xml version="1.0" encoding="UTF-8" standalone="yes"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><fonts count="2"><font><sz val="11"/><name val="Calibri"/></font><font><b/><sz val="11"/><name val="Calibri"/></font></fonts><fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills><borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders><cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs><cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/><xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/><xf numFmtId="4" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs><cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>' },
     ...sheets.map((s, i) => ({ name: `xl/worksheets/sheet${i + 1}.xml`, data: sheetXml(s[1]) }))
   ];
   return zip(files);
@@ -811,36 +771,30 @@ const A = {
   lock: () => { if (dirty && !confirm('You have unsaved changes. Lock anyway?')) return; DB = null; ENC = null; dirty = false; render(); },
   'backup-copy': async () => download(`finance-data-${stamp()}.json`, await serialize()),
   'export-json': () => download(`finance-export-${stamp()}.json`, JSON.stringify(DB, null, 1)),
-  'export-xlsx': () => download(`finance-export-${stamp()}.xlsx`, buildXlsx()),
+  'export-xlsx': () => download(`paycheck-plan-${stamp()}.xlsx`, buildXlsx()),
   'pw-set': () => passwordForm('Set a password'),
   'pw-change': () => passwordForm('Change password'),
   'pw-remove': () => { if (confirm('Remove the password? The data file will be stored unencrypted.')) { ENC = null; commit(); } },
-  'add-acct': () => accountForm(), 'edit-acct': ({ id }) => accountForm(id),
-  'del-acct': ({ id }) => {
-    if (DB.log.some(e => e.accountId === id) || DB.items.some(i => i.accountId === id || i.destId === id) || DB.incomes.some(i => i.accountId === id)) return alert('This account is used by existing entries, items or income. Mark it inactive instead (Edit).');
-    if (confirm('Delete this account?')) { DB.accounts = DB.accounts.filter(a => a.id !== id); syncOpening(); commit(); }
-  },
-  'add-inc': () => payAccts().length ? incomeForm() : alert('Add a paycheck account first.'), 'edit-inc': ({ id }) => incomeForm(id),
-  'del-inc': ({ id }) => { if (confirm('Delete this income source? Past paychecks stay in your history.')) { DB.incomes = DB.incomes.filter(i => i.id !== id); commit(); } },
-  'add-item': () => payAccts().length ? itemForm() : alert('Add a paycheck account first.'), 'edit-item': ({ id }) => itemForm(id),
-  'del-item': ({ id }) => { if (confirm('Delete this recurring item? Existing allocations stay.')) { DB.items = DB.items.filter(i => i.id !== id); commit(); } },
+  month: ({ d }) => { state.month = monthShift(planMonth(), +d); render(); },
+  'month-today': () => { state.month = null; state.scroll = true; render(); },
+  'add-inc': () => incomeForm(), 'edit-inc': ({ id }) => incomeForm(id),
+  'del-inc': ({ id }) => { if (confirm('Delete this income source? Its paychecks disappear from every month, including past ones. (Mark it inactive instead to keep history.)')) { DB.incomes = DB.incomes.filter(i => i.id !== id); commit(); } },
+  'add-item': () => itemForm(), 'edit-item': ({ id }) => itemForm(id),
+  'del-item': ({ id }) => { if (confirm('Delete this item? It disappears from every month, including past ones. (Mark it inactive instead to keep history.)')) { DB.items = DB.items.filter(i => i.id !== id); commit(); } },
   'add-fund': () => fundForm(), 'edit-fund': ({ id }) => fundForm(id),
   'del-fund': ({ id }) => {
     if (fundBalance(id) !== 0) return alert('Pull the remaining balance out of this fund first.');
-    if (confirm('Delete this fund and its history?')) { DB.funds = DB.funds.filter(f => f.id !== id); DB.log = DB.log.filter(e => e.fundId !== id); commit(); }
+    if (confirm('Delete this fund and its history?')) { DB.funds = DB.funds.filter(f => f.id !== id); DB.fundMoves = DB.fundMoves.filter(m => m.fundId !== id); commit(); }
   },
   'fund-move': ({ id, dir }) => fundMoveForm(id, dir),
-  land: ({ inc, exp }) => { const i = byId(DB.incomes, inc); landForm(i ? { incomeId: i.id, expected: exp, date: exp <= today() ? exp : today(), amount: i.amount } : {}); },
-  suggest: ({ id }) => suggestModal(id),
-  'add-alloc': ({ id }) => allocForm(null, id), 'edit-alloc': ({ id }) => allocForm(id),
-  'edit-spend': ({ id }) => spendForm(id),
-  'del-entry': ({ id }) => { if (confirm('Delete this entry?')) { DB.log = DB.log.filter(e => e.id !== id); commit(); } },
-  'open-pc': ({ id }) => { state.pcId = id; state.view = 'home'; render(); },
-  'del-pc': ({ id }) => {
-    if (DB.log.some(e => e.paycheckId === id && e.id !== id)) return alert('This paycheck still has allocations, spending or fund moves. Delete or move those first.');
-    if (confirm('Delete this income entry?')) { DB.log = DB.log.filter(e => e.id !== id); if (state.pcId === id) state.pcId = null; commit(); }
-  },
-  reconcile: ({ id }) => adjustForm(id),
+  'edit-pay': ({ head, key }) => payForm(head, key),
+  'reset-pay': ({ key }) => { DB.pays = DB.pays.filter(p => p.key !== key); closeModal(true); commit(); },
+  'add-xpay': ({ head }) => extraIncomeForm(head), 'edit-xpay': ({ head, id }) => extraIncomeForm(head, id),
+  'del-xpay': ({ id }) => { DB.pays = DB.pays.filter(p => p.id !== id); closeModal(true); commit(); },
+  'add-line': ({ head, amt }) => addLineForm(head, amt ? +amt : 0),
+  'edit-line': ({ head, key }) => lineForm(head, key),
+  'del-extra': ({ id }) => { DB.extras = DB.extras.filter(x => x.id !== id); closeModal(true); commit(); },
+  'del-move': ({ id }) => { if (confirm('Remove this fund move?')) { DB.fundMoves = DB.fundMoves.filter(m => m.id !== id); commit(); } },
   'ob-back': () => { state.step--; render(); },
   'ob-next': async () => {
     const s = state.step;
@@ -852,17 +806,7 @@ const A = {
         ENC = await makeEnc(pw.value);
       }
     }
-    if (s === 1 && !payAccts().length) return alert('Add at least one paycheck account (where your pay lands).');
-    if (s === 5) {
-      const asof = $('#ob-asof').value || today();
-      DB.log = DB.log.filter(e => !(e.type === 'income' && e.opening));
-      const op = { id: uid(), type: 'income', opening: true, date: asof, amount: 0, source: 'Starting balances', accountId: null, note: '' };
-      op.paycheckId = op.id; DB.log.push(op); syncOpening();
-      DB.onboarded = true; state.view = 'home'; state.pcId = op.id;
-      commit();
-      if (suggestions(op).length) setTimeout(() => suggestModal(op.id), 0);
-      return;
-    }
+    if (s === 4) { DB.onboarded = true; state.view = 'plan'; state.month = null; state.scroll = true; return commit(); }
     state.step++; render();
   }
 };
@@ -872,33 +816,36 @@ document.addEventListener('click', e => {
   e.preventDefault(); A[el.dataset.act](el.dataset, el);
 });
 const C = {
-  tog: ({ id, f }, el) => {
-    const e = entry(id);
-    if (f === 'paid' && el.checked && e.needsConfirm) { el.checked = false; return allocForm(id); }
-    e[f] = el.checked;
-    if (f === 'cleared' && el.checked && e.type === 'allocation') e.paid = true;
-    if (f === 'paid' && !el.checked) e.cleared = false;
+  tog: ({ kind, key, head, f }, el) => {
+    if (kind === 'item') {
+      const l = lastPlan.all.find(h => h.date === head).lines.find(x => x.key === key);
+      if (f === 'paid' && el.checked && l.needsConfirm) { el.checked = false; return lineForm(head, key); }
+      const o = DB.occ[key] || {};
+      const patch = { [f]: el.checked };
+      if (f === 'cleared' && el.checked) patch.paid = true;
+      if (f === 'paid' && !el.checked) patch.cleared = false;
+      setOcc(key, { paid: o.paid, cleared: o.cleared, ...patch });
+    } else {
+      const x = byId(DB.extras, key);
+      x[f] = el.checked;
+      if (f === 'cleared' && el.checked) x.paid = true;
+      if (f === 'paid' && !el.checked) x.cleared = false;
+    }
     commit();
   },
-  'pick-pc': (_, el) => { state.pcId = el.value; render(); }
+  landed: ({ head, key }, el) => {
+    const p = lastPlan.all.find(h => h.date === head).pays.find(x => x.key === key);
+    upsertPay(p, { landed: el.checked }); commit();
+  }
 };
 document.addEventListener('change', e => {
   const el = e.target.closest('[data-chg]');
   if (el && C[el.dataset.chg]) return C[el.dataset.chg](el.dataset, el);
   if (e.target.id === 'filein' && e.target.files[0]) {
     const f = e.target.files[0];
-    if (DB && state.view !== 'home' && !confirm('Replace the data currently open with this file?')) return;
+    if (DB && !confirm('Replace the data currently open with this file?')) return;
     f.text().then(loadText);
   }
-});
-document.addEventListener('submit', e => {
-  const form = e.target.closest('[data-form="spend"]');
-  if (!form) return;
-  e.preventDefault();
-  const fd = new FormData(form), pc = entry(form.dataset.pc), amount = parseMoney(fd.get('amount'));
-  if (amount <= 0) return;
-  DB.log.push({ id: uid(), type: 'spending', paycheckId: pc.id, accountId: defaultAcct(pc), date: fd.get('date'), amount, category: fd.get('category').trim(), note: fd.get('note').trim(), cleared: false });
-  commit();
 });
 window.addEventListener('beforeunload', e => { if (DB && dirty) { e.preventDefault(); e.returnValue = ''; } });
 

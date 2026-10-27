@@ -88,3 +88,17 @@ details summary { cursor: pointer; color: var(--muted); font-size: 13px; margin-
 .acct { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 14px; }
 .acct .nm { font-weight: 600; }
 .help { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+.monthnav { display: flex; align-items: center; gap: 10px; margin-top: 8px; flex-wrap: wrap; }
+.monthnav h2 { min-width: 170px; text-align: center; }
+.badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 99px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); vertical-align: middle; margin-left: 6px; }
+.badge.next { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.card.check.next { border: 2px solid var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 14%, transparent); }
+.leftbox { text-align: right; }
+.big2 { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.cats { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.catchip { font-size: 13px; padding: 3px 10px; border-radius: 99px; background: var(--bg); }
+tr.inc td { background: color-mix(in srgb, var(--good) 7%, transparent); }
+tr.skipped td { opacity: .5; }
+.chip.ok { background: color-mix(in srgb, var(--good) 15%, transparent); color: var(--good); }
+table.tl td.name { min-width: 130px; }
+@media (max-width: 640px) { .big2 { font-size: 22px; } table.tl th:nth-child(4), table.tl td:nth-child(4) { display: none; } }
