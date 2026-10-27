@@ -13,7 +13,7 @@ python3 build.py --check  # confirms the page, SHA256SUMS and a fresh rebuild al
   1. Bump `VERSION` and `const VERSION` in `app.js`.
   2. Run `python3 build.py` and `python3 build.py --check`, then commit `docs/`.
   3. Merge to `main`.
-  4. Create a GitHub release tagged `v<version>` and attach `docs/downloads/paycheck-planner-<version>.zip`. Put the SHA-256 in the release notes.
+  4. Create a GitHub release tagged `v<version>`, attach `docs/downloads/paycheck-planner-<version>.zip`, and use `releases/v<version>.md` as the release notes (copy the previous file and update the version and SHA-256).
 - Older zips stay in `docs/downloads/` and remain listed in `SHA256SUMS`.
 - The landing page template is `site/index.template.html`; the screenshot is `docs/assets/screenshot.png`. The download links in the template point at the file on `main` in this repository.
 - Pages setup: repository **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `/docs`**.
