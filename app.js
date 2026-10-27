@@ -623,6 +623,7 @@ function viewOnboard() {
   let body = '';
   if (s === 0) {
     body = `<div class="card"><h2>Welcome</h2>
+      <p class="banner" style="display:block"><b>Please note:</b> this is only a visual aid for seeing where your money is going and when. It is <b>not financial advice</b>.</p>
       <p>This app answers one question: <b>“I have a paycheck coming — what do I need to pay out of it, and what is left?”</b> Each paycheck gets its own card listing the payments due until the next paycheck, in date order.</p>
       <p class="help">Setup takes a few minutes: your income, the things that pull money on a schedule, and any sinking funds. No account balances are tracked.</p>
       <h3>Protect your data (optional)</h3>
@@ -717,7 +718,7 @@ function viewSettings() {
     ${ENC ? '<button data-act="pw-change">Change password</button> <button class="danger" data-act="pw-remove">Remove password</button>' : '<button class="primary" data-act="pw-set">Set a password</button>'}</div>
   <div class="card"><h2>Export</h2><p class="muted small">Exports are not encrypted. The spreadsheet contains the month shown on the Plan page, plus your income, items and funds.</p>
     <button class="primary" data-act="export-xlsx">Export to spreadsheet (.xlsx)</button> <button data-act="export-json">Export data (JSON)</button></div>
-  <div class="card"><h2>About</h2><p class="muted small">Paycheck Planner v${VERSION}. Everything runs in this page; nothing is sent anywhere.</p></div>
+  <div class="card"><h2>About</h2><p class="muted small">Paycheck Planner v${VERSION}. Everything runs in this page; nothing is sent anywhere.</p><p class="small"><b>A visual aid only, not financial advice.</b> It shows where your money is going and when; it does not recommend or evaluate any financial decision. It is only as accurate as what you enter.</p></div>
   <div class="card"><h2>Session</h2><button data-act="lock">Lock / close data</button> <button data-act="openfile">Replace with a data file…</button><input type="file" id="filein" accept=".json,application/json" hidden></div>`;
 }
 

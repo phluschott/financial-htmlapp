@@ -1,6 +1,12 @@
 PAYCHECK PLANNER
 ================
 
+IMPORTANT
+  1. This is only a visual aid. It shows you where your money is going and
+     when. That is all it is designed to do.
+  2. It is NOT financial advice. Nothing in this app is financial, tax, legal
+     or investment advice, and the numbers are only what you type in.
+
 A paycheck-by-paycheck planner. It runs entirely on your computer, in your
 browser, with no internet connection and no account.
 
@@ -32,4 +38,4 @@ VERIFYING YOUR DOWNLOAD
     macOS:                 shasum -a 256 <zipfile>
     Linux:                 sha256sum <zipfile>
 
-This is a planning tool, not financial advice.
+This is a visual aid, not financial advice. It comes with no warranty.

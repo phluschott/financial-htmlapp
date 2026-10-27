@@ -1,5 +1,8 @@
 # Paycheck Planner
 
+> **1. It is only a visual aid** — it shows where your money is going and when, nothing more.
+> **2. It is not financial advice.**
+
 A paycheck-by-paycheck planner that runs in any browser. No server, no accounts, no network access.
 
 It answers one question: **"I have a paycheck coming. What do I need to pay out of it, and what is left to play with?"**
