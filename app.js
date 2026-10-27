@@ -29,6 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
+const VERSION = '1.0.0';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -287,7 +288,7 @@ async function loadText(text) {
     });
     if (!r) return false;
     DB = migrate(modal.result.db); ENC = modal.result.enc;
-  } else if (obj && Array.isArray(obj.log)) { DB = migrate(obj); ENC = null; }
+  } else if (obj && Array.isArray(obj.incomes) && Array.isArray(obj.items)) { DB = migrate(obj); ENC = null; }
   else { alert('That file is not a valid data file.'); return false; }
   dirty = false; state.view = DB.onboarded ? 'plan' : 'onboard'; state.step = 0; state.month = null; state.scroll = true;
   render();
@@ -716,6 +717,7 @@ function viewSettings() {
     ${ENC ? '<button data-act="pw-change">Change password</button> <button class="danger" data-act="pw-remove">Remove password</button>' : '<button class="primary" data-act="pw-set">Set a password</button>'}</div>
   <div class="card"><h2>Export</h2><p class="muted small">Exports are not encrypted. The spreadsheet contains the month shown on the Plan page, plus your income, items and funds.</p>
     <button class="primary" data-act="export-xlsx">Export to spreadsheet (.xlsx)</button> <button data-act="export-json">Export data (JSON)</button></div>
+  <div class="card"><h2>About</h2><p class="muted small">Paycheck Planner v${VERSION}. Everything runs in this page; nothing is sent anywhere.</p></div>
   <div class="card"><h2>Session</h2><button data-act="lock">Lock / close data</button> <button data-act="openfile">Replace with a data file…</button><input type="file" id="filein" accept=".json,application/json" hidden></div>`;
 }
 

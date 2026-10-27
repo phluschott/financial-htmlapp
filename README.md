@@ -34,3 +34,18 @@ Set a password during setup or in **Settings**. The data file is then encrypted 
 - Fixed income creates paychecks from its schedule. Mark one **Landed** when the money arrives; add variable or one-off income with **+ Extra income**.
 - Changing an amount or price freezes past occurrences at their old value, so earlier months do not change. Deleting an item or income source removes it from past months too; mark it inactive to keep history.
 - `finance-data*.json`, `backups/` and `*.xlsx` are git-ignored so personal data is never committed.
+
+## Publishing a download page
+
+The website lives in `docs/` (a static page plus the downloadable zip) so it can be served with GitHub Pages. The app itself is **not** served from there — people download the zip and open it locally.
+
+```
+python3 build.py          # builds docs/downloads/paycheck-planner-<version>.zip, SHA256SUMS and docs/index.html
+python3 build.py --check  # confirms the page, SHA256SUMS and a fresh rebuild all agree
+```
+
+- The version comes from `VERSION` and must match `const VERSION` in `app.js` (the build fails otherwise).
+- The zip is deterministic (sorted entries, fixed timestamps, stored uncompressed), so anyone can rebuild it from source and get the same SHA-256.
+- To release a new version: bump both version numbers, run `python3 build.py`, commit `docs/`. Older zips stay in `docs/downloads/` and are listed in `SHA256SUMS`.
+- The landing page template is `site/index.template.html`; the screenshot is `docs/assets/screenshot.png`.
+- Enable Pages: repository **Settings → Pages → Build and deployment → Deploy from a branch → `main` / `/docs`**.

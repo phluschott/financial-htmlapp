@@ -1,0 +1,35 @@
+PAYCHECK PLANNER
+================
+
+A paycheck-by-paycheck planner. It runs entirely on your computer, in your
+browser, with no internet connection and no account.
+
+HOW TO START
+  1. Unzip this folder somewhere you will keep it (for example Documents).
+  2. Open "index.html" in your browser (double-click it).
+  3. Follow the short setup: your income, your bills and debts, any sinking funds.
+
+SAVING YOUR DATA
+  Chrome / Edge / Opera:
+    Click "Choose app folder" and pick this same folder. The app then saves
+    "finance-data.json" here automatically, and keeps timestamped backups in
+    a "backups" folder. You may be asked to allow access each time you open it.
+  Firefox / Safari / other browsers:
+    These cannot save to a folder. Use "Save file" to download your data, and
+    "Open a data file" to load it next time.
+
+PASSWORD (OPTIONAL)
+  Settings -> Set a password encrypts your data file (AES-256). There is no
+  recovery: if you forget the password, the data cannot be opened.
+
+KEEP IT PRIVATE
+  "finance-data.json" and the "backups" folder contain your financial details.
+  Do not share them or put them in a public place.
+
+VERIFYING YOUR DOWNLOAD
+  The download page lists a SHA-256 hash for the zip. Compare it with:
+    Windows (PowerShell):  Get-FileHash .\<zipfile> -Algorithm SHA256
+    macOS:                 shasum -a 256 <zipfile>
+    Linux:                 sha256sum <zipfile>
+
+This is a planning tool, not financial advice.
