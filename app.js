@@ -2,7 +2,7 @@
 'use strict';
 
 /* ======================================================================
-   Paycheck Planner
+   Visual Paycheck Planner
    - All money is stored as integer cents.
    - Paychecks come from the income schedules; each paycheck covers the span until the next one.
    - Recurring items are assigned to the paycheck that precedes their due date (overridable).
@@ -29,7 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -623,10 +623,10 @@ function statusHtml() {
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
 function topbar() {
   const nav = [['plan', 'Plan'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
-  return `<div class="topbar"><span class="brand">Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
+  return `<div class="topbar"><span class="brand">Visual Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
 }
 function viewStart() {
-  return `<div class="start card"><h2>Paycheck Planner</h2>
+  return `<div class="start card"><h2>Visual Paycheck Planner</h2>
     <p class="muted">See what each paycheck has to pay, when, and what is left to play with. Your data stays on this computer in a file you control.</p>
     ${store.pending ? `<button class="opt primary" data-act="reconnect">Reconnect to “${esc(store.pending.name)}”<small>Continue where you left off</small></button>` : ''}
     ${fsa ? `<button class="opt" data-act="connect">Choose app folder<small>Chrome / Edge: autosaves ${FILE} (and backups) into the folder you pick</small></button>` : ''}
@@ -685,7 +685,7 @@ function viewOnboard() {
       <div class="kv"><span>Income sources</span><b>${DB.incomes.length}</b></div><div class="kv"><span>Recurring items</span><b>${DB.items.length}</b></div><div class="kv"><span>Sinking funds</span><b>${DB.funds.length}</b></div>
       <p class="help">You will land on the Plan page, with your next paycheck highlighted.</p></div>`;
   const nav = `<div class="actions" style="margin-top:14px">${s > 0 ? '<button data-act="ob-back">Back</button>' : ''}<button class="primary" data-act="ob-next">${s === 4 ? 'Finish setup' : s === 0 ? 'Next' : 'Next / skip'}</button></div>`;
-  return `<div class="topbar"><span class="brand">Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
+  return `<div class="topbar"><span class="brand">Visual Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
 }
 
 function rowHtml(h, r) {
@@ -779,7 +779,7 @@ function viewSettings() {
     ${ENC ? '<button data-act="pw-change">Change password</button> <button class="danger" data-act="pw-remove">Remove password</button>' : '<button class="primary" data-act="pw-set">Set a password</button>'}</div>
   <div class="card"><h2>Export</h2><p class="muted small">Exports are not encrypted. The spreadsheet contains the month shown on the Plan page, plus your income, items and funds.</p>
     <button class="primary" data-act="export-xlsx">Export to spreadsheet (.xlsx)</button> <button data-act="export-json">Export data (JSON)</button></div>
-  <div class="card"><h2>About</h2><p class="muted small">Paycheck Planner v${VERSION}. Everything runs in this page; nothing is sent anywhere.</p><p class="small"><b>A visual aid only, not financial advice.</b> It shows where your money is going and when; it does not recommend or evaluate any financial decision. It is only as accurate as what you enter.</p></div>
+  <div class="card"><h2>About</h2><p class="muted small">Visual Paycheck Planner v${VERSION}. Everything runs in this page; nothing is sent anywhere.</p><p class="small"><b>A visual aid only, not financial advice.</b> It shows where your money is going and when; it does not recommend or evaluate any financial decision. It is only as accurate as what you enter.</p></div>
   <div class="card"><h2>Session</h2><button data-act="lock">Lock / close data</button> <button data-act="openfile">Replace with a data file…</button><input type="file" id="filein" accept=".json,application/json" hidden></div>`;
 }
 

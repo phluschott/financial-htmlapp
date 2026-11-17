@@ -1,5 +1,5 @@
-PAYCHECK PLANNER
-================
+VISUAL PAYCHECK PLANNER
+=======================
 
 IMPORTANT
   1. This is only a visual aid. It shows you where your money is going and

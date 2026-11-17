@@ -1,4 +1,4 @@
-# Session notes — Paycheck Planner (read this first next time)
+# Session notes — Visual Paycheck Planner (read this first next time)
 
 Last updated: 2026-10-27. Repo: phluschott/financial-htmlapp. Work branch: `claude/jolly-edison-x3thm6` (restart it from latest `main` each session; earlier PRs #1 and #2 are merged).
 
@@ -25,17 +25,17 @@ A serverless, offline, single-folder browser app: **"I have a paycheck coming �
 - `RELEASING.md` = maintainer steps (incl. next-release to-do). `README.md` is public-facing.
 
 ## State at end of session
-- **v1.0.0 released** by the user (title "Visual Paycheck Planner v1.0.0"), asset hash `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`. Verified: release asset == SHA256SUMS == page.
+- **v1.0.0 released** by the user (v1.0.1 prepared 2026-11-17; the user publishes releases manually — `gh release create` is blocked) (title "Visual Paycheck Planner v1.0.0"), asset hash `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`. Verified: release asset == SHA256SUMS == page.
 - Repo is public. README merged to main.
 - **GitHub Pages: user was to enable it** (Settings → Pages → main /docs). Not confirmed; check `https://phluschott.github.io/financial-htmlapp/` loads.
 
-## In progress / unreleased (branch `claude/jolly-edison-x3thm6`, not merged)
+## Shipped in v1.0.1 (merged to main; release published by the user)
 - **"Charged to" for non-debt items (2026-11-17).** A subscription/bill/transfer/other can be charged to a debt item (e.g. Amazon Prime -> Amazon CC). It then has NO cash line of its own; its amount is added to that debt's next payment (charges dated after the debt's previous due date up to this due date), so it is never counted twice (the plan card's debt line shows "includes $168 payment + $16 Amazon Prime"). Data: `item.chargeTo` (debt item id) and `item.chargeSince` (set on change = day after the debt's last due date <= today, so finished cycles aren't rewritten). Setup table has a "Charged to" column; editing a debt line lets you edit each charged amount (needed for "varies" items). Code: `buildPlan` (debts/chargedOn), `itemForm`, `lineForm`, `chargedCell`, `rowHtml`, xlsx "Includes" column. Skipping a debt line also skips its charges (known limit). Items charged to a deleted/inactive/changed-category debt silently go back to direct cash lines. One-time "extras" cannot be charged to a debt yet.
 - **Subscriptions box.** Fourth stat box on the Plan summary: total of all `Subscription` items falling due in the *calendar month* shown (`subscriptionsFor`), independent of paycheck windows, including ones charged to a card; skipped occurrences excluded; tooltip lists them. The category chips below are by paycheck window, so the two can differ.
-- These changed `app.js`, so `python3 build.py --check` reports the published 1.0.0 zip as different until a new version (1.0.1 + the "Visual Paycheck Planner" rename) is built. **Do not rebuild/alter the 1.0.0 zip.** The user has not asked for a release yet.
+- App renamed to "Visual Paycheck Planner" in 1.0.1 (zip is `visual-paycheck-planner-<ver>.zip`; the 1.0.0 zip keeps its old name and must never be altered). 1.0.1 hash `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`. v1.0.0 data files open unchanged.
 
 ## Open to-dos
-1. **Rename app to "Visual Paycheck Planner"** in the next release (files listed in RELEASING.md); bump version — never alter the published v1.0.0 zip.
+1. (Done in 1.0.1) rename to "Visual Paycheck Planner".
 2. No LICENSE file; landing page says "Free". Ask the user which license.
 3. Folder autosave (File System Access API) is **untested in a real Chrome/Edge** — headless Chromium can't do it. Ask user to try it; watch the permission re-grant flow and `reconnect`.
 4. Known limits: items back-fill occurrences before their "next due date" (recurring schedule semantics); deleting an item/income removes it from past months (inactive keeps history; price changes freeze past amounts); same-day lines sort by name.
