@@ -1,6 +1,7 @@
 # Paycheck Planner
 
 > **1. It is only a visual aid.** It shows you where your money is going and when. That is all it is designed to do.
+> 
 > **2. It is not financial advice.** Nothing in this app, this repository, or its website is financial, tax, legal, or investment advice.
 
 Paycheck Planner splits your month by paycheck. For each paycheck it lists everything that comes out before the next one, in date order, with a running "left after" figure, so you can see what each paycheck has to cover, when, and how much is left over.
