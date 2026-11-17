@@ -29,6 +29,11 @@ A serverless, offline, single-folder browser app: **"I have a paycheck coming �
 - Repo is public. README merged to main.
 - **GitHub Pages: user was to enable it** (Settings → Pages → main /docs). Not confirmed; check `https://phluschott.github.io/financial-htmlapp/` loads.
 
+## In progress / unreleased (branch `claude/jolly-edison-x3thm6`, not merged)
+- **"Charged to" for non-debt items (2026-11-17).** A subscription/bill/transfer/other can be charged to a debt item (e.g. Amazon Prime -> Amazon CC). It then has NO cash line of its own; its amount is added to that debt's next payment (charges dated after the debt's previous due date up to this due date), so it is never counted twice (the plan card's debt line shows "includes $168 payment + $16 Amazon Prime"). Data: `item.chargeTo` (debt item id) and `item.chargeSince` (set on change = day after the debt's last due date <= today, so finished cycles aren't rewritten). Setup table has a "Charged to" column; editing a debt line lets you edit each charged amount (needed for "varies" items). Code: `buildPlan` (debts/chargedOn), `itemForm`, `lineForm`, `chargedCell`, `rowHtml`, xlsx "Includes" column. Skipping a debt line also skips its charges (known limit). Items charged to a deleted/inactive/changed-category debt silently go back to direct cash lines. One-time "extras" cannot be charged to a debt yet.
+- **Subscriptions box.** Fourth stat box on the Plan summary: total of all `Subscription` items falling due in the *calendar month* shown (`subscriptionsFor`), independent of paycheck windows, including ones charged to a card; skipped occurrences excluded; tooltip lists them. The category chips below are by paycheck window, so the two can differ.
+- These changed `app.js`, so `python3 build.py --check` reports the published 1.0.0 zip as different until a new version (1.0.1 + the "Visual Paycheck Planner" rename) is built. **Do not rebuild/alter the 1.0.0 zip.** The user has not asked for a release yet.
+
 ## Open to-dos
 1. **Rename app to "Visual Paycheck Planner"** in the next release (files listed in RELEASING.md); bump version — never alter the published v1.0.0 zip.
 2. No LICENSE file; landing page says "Free". Ask the user which license.
