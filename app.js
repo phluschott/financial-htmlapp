@@ -2,7 +2,7 @@
 'use strict';
 
 /* ======================================================================
-   Paycheck Planner
+   Visual Paycheck Planner
    - All money is stored as integer cents.
    - Paychecks come from the income schedules; each paycheck covers the span until the next one.
    - Recurring items are assigned to the paycheck that precedes their due date (overridable).
@@ -29,7 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
-const VERSION = '1.0.0';
+const VERSION = '1.0.1';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -96,6 +96,7 @@ const fmtShort = iso => `${dow(iso)} ${MONTHS[+iso.slice(5, 7) - 1]} ${+iso.slic
 const monthKey = iso => iso.slice(0, 7);
 const monthStart = k => k + '-01';
 const monthShift = (k, n) => { const [y, m] = k.split('-').map(Number); const i = y * 12 + m - 1 + n; return `${Math.floor(i / 12)}-${pad(i % 12 + 1)}`; };
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const monthLabel = k => { const [y, m] = k.split('-'); return ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'][m - 1] + ' ' + y; };
 
 const activeFixed = () => DB.incomes.filter(i => i.type === 'fixed' && i.active !== false);
@@ -130,16 +131,37 @@ function buildPlan(mk) {
   if (!H.length) return { heads: [], all: H };
   const at = d => H.find(h => d >= h.date && d < h.end);
   const lo = H[0].date, hi = H[H.length - 1].end;
+  // An item "charged to" a debt does not come out of the paycheck by itself; it is added to that debt's
+  // payment, so it is only ever counted once. (Occurrences before it.chargeSince keep their old behaviour.)
+  const debts = new Map(DB.items.filter(i => i.category === 'Debt payment' && i.active !== false).map(i => [i.id, i]));
+  const chargedOn = (it, date) => !!(it.chargeTo && it.category !== 'Debt payment' && debts.has(it.chargeTo) && date >= (it.chargeSince || ''));
   for (const it of DB.items) {
     if (it.active === false) continue;
-    for (const due of occurrences(it, lo, hi)) {
+    const dues = occurrences(it, lo, hi);
+    const history = it.category === 'Debt payment' ? occurrences(it, addDays(lo, -400), hi) : [];
+    for (const due of dues) {
+      if (chargedOn(it, due)) continue;
       const key = it.id + ':' + due, o = DB.occ[key] || {};
       const h = o.moveTo ? H.find(x => x.date === o.moveTo) : at(due);
       if (!h) continue;
+      const base = o.amount !== undefined ? o.amount : itemAmount(it);
+      const charges = [];
+      if (it.category === 'Debt payment') {
+        const prev = history[history.indexOf(due) - 1] || addDays(due, -31);
+        for (const c of DB.items) {
+          if (c.active === false || c.chargeTo !== it.id) continue;
+          for (const cd of occurrences(c, addDays(prev, 1), addDays(due, 1))) {
+            if (!chargedOn(c, cd)) continue;
+            const ck = c.id + ':' + cd, co = DB.occ[ck] || {};
+            if (co.skip) continue;
+            charges.push({ it: c, key: ck, date: cd, amount: co.amount !== undefined ? co.amount : itemAmount(c), needsConfirm: c.mode === 'ask' && !co.confirmed });
+          }
+        }
+      }
       h.lines.push({
         kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
-        amount: o.amount !== undefined ? o.amount : itemAmount(it), paid: !!o.paid, cleared: !!o.cleared, skip: !!o.skip,
-        needsConfirm: it.mode === 'ask' && !o.confirmed
+        base, charges, amount: base + sum(charges, c => c.amount), paid: !!o.paid, cleared: !!o.cleared, skip: !!o.skip,
+        needsConfirm: (it.mode === 'ask' && !o.confirmed) || charges.some(c => c.needsConfirm)
       });
     }
   }
@@ -422,12 +444,22 @@ function itemForm(id) {
       + fld('Next due date', 'anchor', it.anchor, 'type="date"')
       + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
       + fld('Goes to (e.g. Ally Savings)', 'dest', it.dest || '', '', 'data-showif="category=Transfer"')
+      + sel('Charged to', 'chargeTo', [['', '— Paid directly from the paycheck —'], ...DB.items.filter(d => d.category === 'Debt payment' && d.id !== it.id && d.active !== false).map(d => [d.id, d.name])], it.chargeTo || '', 'data-showif="category=Subscription|Bill|Transfer|Other"')
+      + '<p class="help" data-showif="category=Subscription|Bill|Transfer|Other">If this is charged to a credit card or loan you track here, pick it. The amount is then added to that debt\'s payment instead of coming out of the paycheck on its own, so it is never counted twice.</p>'
       + chk('Active', 'active', it.active !== false),
     onSubmit: fd => {
       if (!fd.get('name').trim()) return 'Name is required.';
       const o = id ? it : { id: uid() }, amount = parseMoney(fd.get('amount'));
       if (id && (o.mode !== fd.get('mode') || itemAmount(o) !== amount)) freezeItem(o);
-      Object.assign(o, { name: fd.get('name').trim(), category: fd.get('category'), mode: fd.get('mode'), amount, freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, dest: fd.get('category') === 'Transfer' ? fd.get('dest').trim() : '', active: fd.get('active') === 'on' });
+      const chargeTo = fd.get('category') === 'Debt payment' ? '' : (fd.get('chargeTo') || '');
+      // Changing where an item is charged does not rewrite finished payment cycles: it applies from the day
+      // after the debt's most recent due date (so charges already on the card count toward its next payment).
+      if (id && chargeTo !== (o.chargeTo || '')) {
+        const debt = byId(DB.items, chargeTo);
+        const last = debt ? occurrences(debt, addDays(today(), -400), addDays(today(), 1)).pop() : null;
+        o.chargeSince = last ? addDays(last, 1) : today();
+      }
+      Object.assign(o, { chargeTo, name: fd.get('name').trim(), category: fd.get('category'), mode: fd.get('mode'), amount, freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, dest: fd.get('category') === 'Transfer' ? fd.get('dest').trim() : '', active: fd.get('active') === 'on' });
       if (o.mode === 'ask') o.lastAmount = amount;
       if (!id) DB.items.push(o);
       commit();
@@ -486,7 +518,8 @@ function lineForm(headDate, key) {
     const natural = (lastPlan.all.find(x => l.due >= x.date && l.due < x.end) || h).date;
     return modal({
       title: `${l.name} — due ${fmtShort(l.due)}`,
-      body: money$(l.needsConfirm ? 'Amount this time (confirm)' : 'Amount', 'amount', l.amount)
+      body: money$(l.needsConfirm ? 'Amount this time (confirm)' : (l.charges.length ? 'Payment amount (before charges)' : 'Amount'), 'amount', l.base)
+        + (l.charges.length ? `<p class="help">Charged to this account since the last payment. These are added to the amount above, so this payment totals <b>${money(l.amount)}</b>:</p>` + l.charges.map((c, n) => money$(`${esc(c.it.name)} · ${fmtShort(c.date)}${c.needsConfirm ? ' (confirm)' : ''}`, 'c' + n, c.amount)).join('') : '')
         + chk('Paid', 'paid', l.paid) + chk('Cleared (shows in the bank)', 'cleared', l.cleared)
         + sel('Pay this from', 'moveTo', headOptions(), h.date)
         + chk('Skip this time (not due / handled elsewhere)', 'skip', l.skip),
@@ -495,6 +528,11 @@ function lineForm(headDate, key) {
         const cleared = fd.get('cleared') === 'on', paid = fd.get('paid') === 'on' || cleared, mv = fd.get('moveTo');
         setOcc(l.key, { amount, paid, cleared, confirmed: true, skip: fd.get('skip') === 'on', moveTo: mv === natural ? undefined : mv });
         if (l.it.mode === 'ask') l.it.lastAmount = amount;
+        l.charges.forEach((c, n) => {
+          const v = parseMoney(fd.get('c' + n));
+          setOcc(c.key, { amount: v, confirmed: true });
+          if (c.it.mode === 'ask') c.it.lastAmount = v;
+        });
         commit();
       }
     });
@@ -585,10 +623,10 @@ function statusHtml() {
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
 function topbar() {
   const nav = [['plan', 'Plan'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
-  return `<div class="topbar"><span class="brand">Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
+  return `<div class="topbar"><span class="brand">Visual Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
 }
 function viewStart() {
-  return `<div class="start card"><h2>Paycheck Planner</h2>
+  return `<div class="start card"><h2>Visual Paycheck Planner</h2>
     <p class="muted">See what each paycheck has to pay, when, and what is left to play with. Your data stays on this computer in a file you control.</p>
     ${store.pending ? `<button class="opt primary" data-act="reconnect">Reconnect to “${esc(store.pending.name)}”<small>Continue where you left off</small></button>` : ''}
     ${fsa ? `<button class="opt" data-act="connect">Choose app folder<small>Chrome / Edge: autosaves ${FILE} (and backups) into the folder you pick</small></button>` : ''}
@@ -603,11 +641,19 @@ function secIncomes() {
     <p class="help">Fixed income creates your paychecks automatically (for example every other Friday). Variable income is added on the Plan page when it lands.</p>
     <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">No income yet.</td></tr>'}</tbody></table></div></div>`;
 }
+function chargedCell(i) {
+  if (i.category === 'Debt payment') {
+    const n = DB.items.filter(c => c.chargeTo === i.id && c.active !== false).length;
+    return n ? `<span class="muted small">${n} item${n === 1 ? '' : 's'} charged here</span>` : '<span class="muted">—</span>';
+  }
+  const d = i.chargeTo && byId(DB.items, i.chargeTo);
+  return d && d.category === 'Debt payment' ? `<b>${esc(d.name)}</b>` : '<span class="muted">Paycheck (directly)</span>';
+}
 function secItems() {
-  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
+  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td>${chargedCell(i)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
   return `<div class="card"><div class="head"><h2>Bills, subscriptions &amp; debts</h2><button class="primary" data-act="add-item">+ Add item</button></div>
-    <p class="help">Everything that pulls money on a schedule: subscriptions, bills, credit card minimums, mortgage, and regular transfers to savings. Each lands on the paycheck that comes before its due date.</p>
-    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="4" class="muted">Nothing added yet.</td></tr>'}</tbody></table></div></div>`;
+    <p class="help">Everything that pulls money on a schedule: subscriptions, bills, credit card minimums, mortgage, and regular transfers to savings. Each lands on the paycheck that comes before its due date. If a bill is charged to a credit card, set <b>Charged to</b> and it is added to that card's payment instead of being paid separately.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th>Charged to</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted">Nothing added yet.</td></tr>'}</tbody></table></div></div>`;
 }
 function secFunds() {
   const rows = DB.funds.map(f => `<tr><td>${esc(f.name)}<div class="muted small">${esc(f.purpose)}</div></td><td class="num">${money(fundBalance(f.id))}</td><td class="num"><button class="link" data-act="edit-fund" data-id="${f.id}">Edit</button><button class="link danger" data-act="del-fund" data-id="${f.id}">Delete</button></td></tr>`).join('');
@@ -639,7 +685,7 @@ function viewOnboard() {
       <div class="kv"><span>Income sources</span><b>${DB.incomes.length}</b></div><div class="kv"><span>Recurring items</span><b>${DB.items.length}</b></div><div class="kv"><span>Sinking funds</span><b>${DB.funds.length}</b></div>
       <p class="help">You will land on the Plan page, with your next paycheck highlighted.</p></div>`;
   const nav = `<div class="actions" style="margin-top:14px">${s > 0 ? '<button data-act="ob-back">Back</button>' : ''}<button class="primary" data-act="ob-next">${s === 4 ? 'Finish setup' : s === 0 ? 'Next' : 'Next / skip'}</button></div>`;
-  return `<div class="topbar"><span class="brand">Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
+  return `<div class="topbar"><span class="brand">Visual Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
 }
 
 function rowHtml(h, r) {
@@ -655,7 +701,7 @@ function rowHtml(h, r) {
     return `<tr class="${r.t === 0 ? 'inc' : ''}"><td class="small">${d}</td><td>${esc(r.name)}${r.m.note ? `<div class="muted small">${esc(r.m.note)}</div>` : ''}</td><td class="num ${r.t === 0 ? 'pos' : ''}">${r.t === 0 ? '+' : '−'}${money(r.amount)}</td><td class="num">${money(r.run)}</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link danger" data-act="del-move" data-id="${r.m.id}">✕</button></td></tr>`;
   }
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
-    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div></td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>
@@ -678,6 +724,19 @@ function checkCard(h, plan) {
       <button class="link" data-act="add-xpay" data-head="${h.date}">+ Extra income</button></div></div>`;
 }
 
+// Subscriptions falling due in a calendar month, whichever paycheck or card they are paid through.
+function subscriptionsFor(mk) {
+  const list = [];
+  for (const it of DB.items) {
+    if (it.category !== 'Subscription' || it.active === false) continue;
+    for (const due of occurrences(it, monthStart(mk), monthStart(monthShift(mk, 1)))) {
+      const o = DB.occ[it.id + ':' + due] || {};
+      if (o.skip) continue;
+      list.push({ it, due, amount: o.amount !== undefined ? o.amount : itemAmount(it) });
+    }
+  }
+  return { list, total: sum(list, x => x.amount) };
+}
 function viewPlan() {
   const mk = planMonth(), plan = buildPlan(mk); lastPlan = plan;
   const nav = `<div class="monthnav"><button data-act="month" data-d="-1">‹</button><h2>${monthLabel(mk)}</h2><button data-act="month" data-d="1">›</button><button class="link" data-act="month-today">Jump to next paycheck</button></div>`;
@@ -688,10 +747,12 @@ function viewPlan() {
   const cats = {};
   inMonth.forEach(h => h.rows.filter(r => r.t === 1 && !r.skip).forEach(r => { cats[r.category] = (cats[r.category] || 0) + r.amount; }));
   const catRows = Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<span class="catchip">${esc(c)} <b>${money(v)}</b>${income ? ` <span class="muted">${Math.round(v / income * 100)}%</span>` : ''}</span>`).join('');
+  const subs = subscriptionsFor(mk);
   const summary = `<div class="card"><div class="stats" style="margin-top:0">
       <div class="stat"><div class="k">Income this month</div><div class="v">${money(income)}</div><div class="muted small">${landed >= income ? 'all landed' : `${money(landed)} landed · ${money(income - landed)} expected`}</div></div>
       <div class="stat"><div class="k">Going out</div><div class="v">${money(out)}</div></div>
-      <div class="stat"><div class="k">Left to play with</div><div class="v ${income - out < 0 ? 'neg' : 'pos'}">${money(income - out)}</div></div></div>
+      <div class="stat"><div class="k">Left to play with</div><div class="v ${income - out < 0 ? 'neg' : 'pos'}">${money(income - out)}</div></div>
+      <div class="stat" title="${esc(subs.list.map(x => `${x.it.name} ${money(x.amount)}`).join(', '))}"><div class="k">Subscriptions in ${MONTH_NAMES[+mk.slice(5) - 1]}</div><div class="v">${money(subs.total)}</div><div class="muted small">${subs.list.length} subscription${subs.list.length === 1 ? '' : 's'}${subs.list.some(x => x.it.chargeTo) ? ' · some on cards' : ''}</div></div></div>
       ${catRows ? `<div class="cats">${catRows}</div>` : ''}</div>`;
   return nav + summary + (plan.heads.length ? plan.heads.map(h => checkCard(h, plan)).join('') : '<div class="card muted">No paychecks fall in this month.</div>');
 }
@@ -718,7 +779,7 @@ function viewSettings() {
     ${ENC ? '<button data-act="pw-change">Change password</button> <button class="danger" data-act="pw-remove">Remove password</button>' : '<button class="primary" data-act="pw-set">Set a password</button>'}</div>
   <div class="card"><h2>Export</h2><p class="muted small">Exports are not encrypted. The spreadsheet contains the month shown on the Plan page, plus your income, items and funds.</p>
     <button class="primary" data-act="export-xlsx">Export to spreadsheet (.xlsx)</button> <button data-act="export-json">Export data (JSON)</button></div>
-  <div class="card"><h2>About</h2><p class="muted small">Paycheck Planner v${VERSION}. Everything runs in this page; nothing is sent anywhere.</p><p class="small"><b>A visual aid only, not financial advice.</b> It shows where your money is going and when; it does not recommend or evaluate any financial decision. It is only as accurate as what you enter.</p></div>
+  <div class="card"><h2>About</h2><p class="muted small">Visual Paycheck Planner v${VERSION}. Everything runs in this page; nothing is sent anywhere.</p><p class="small"><b>A visual aid only, not financial advice.</b> It shows where your money is going and when; it does not recommend or evaluate any financial decision. It is only as accurate as what you enter.</p></div>
   <div class="card"><h2>Session</h2><button data-act="lock">Lock / close data</button> <button data-act="openfile">Replace with a data file…</button><input type="file" id="filein" accept=".json,application/json" hidden></div>`;
 }
 
@@ -738,10 +799,11 @@ function render() {
 function buildXlsx() {
   const d = c => Math.round(c) / 100, mk = planMonth(), plan = buildPlan(mk), sheets = [];
   const inMonth = plan.heads.filter(h => h !== plan.inProgress);
-  const planRows = [['Paycheck', 'Date', 'What', 'Category', 'Goes to', 'Amount (+in / −out)', 'Left after', 'Paid', 'Cleared']];
+  const planRows = [['Paycheck', 'Date', 'What', 'Category', 'Goes to', 'Amount (+in / −out)', 'Left after', 'Paid', 'Cleared', 'Includes']];
   for (const h of plan.heads) for (const r of h.rows) {
     planRows.push([h.date, r.date, r.name, r.category || (r.t === 0 ? 'Income' : ''), r.dest || '', r.skip ? 0 : d(r.t === 0 ? r.amount : -r.amount), r.skip ? '' : d(r.run),
-      r.t === 1 ? (r.paid ? 'Y' : 'N') : (r.kind === 'pay' ? (r.pay.landed ? 'Landed' : 'Expected') : ''), r.t === 1 && r.kind !== 'fund' ? (r.cleared ? 'Y' : 'N') : '']);
+      r.t === 1 ? (r.paid ? 'Y' : 'N') : (r.kind === 'pay' ? (r.pay.landed ? 'Landed' : 'Expected') : ''), r.t === 1 && r.kind !== 'fund' ? (r.cleared ? 'Y' : 'N') : '',
+      r.charges && r.charges.length ? `${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + ') : '']);
   }
   planRows.push([], ['Left to play with by paycheck']);
   for (const h of plan.heads) planRows.push([h.date, '', 'Income ' + d(h.income) + ' · Out ' + d(h.out), '', '', d(h.left)]);
@@ -783,7 +845,7 @@ const A = {
   'add-inc': () => incomeForm(), 'edit-inc': ({ id }) => incomeForm(id),
   'del-inc': ({ id }) => { if (confirm('Delete this income source? Its paychecks disappear from every month, including past ones. (Mark it inactive instead to keep history.)')) { DB.incomes = DB.incomes.filter(i => i.id !== id); commit(); } },
   'add-item': () => itemForm(), 'edit-item': ({ id }) => itemForm(id),
-  'del-item': ({ id }) => { if (confirm('Delete this item? It disappears from every month, including past ones. (Mark it inactive instead to keep history.)')) { DB.items = DB.items.filter(i => i.id !== id); commit(); } },
+  'del-item': ({ id }) => { if (confirm('Delete this item? It disappears from every month, including past ones. (Mark it inactive instead to keep history.)' + (DB.items.some(c => c.chargeTo === id) ? ' Items charged to it will go back to coming out of the paycheck directly.' : ''))) { DB.items = DB.items.filter(i => i.id !== id); commit(); } },
   'add-fund': () => fundForm(), 'edit-fund': ({ id }) => fundForm(id),
   'del-fund': ({ id }) => {
     if (fundBalance(id) !== 0) return alert('Pull the remaining balance out of this fund first.');

@@ -11,7 +11,7 @@ import hashlib, pathlib, re, sys, zipfile, datetime
 
 ROOT = pathlib.Path(__file__).resolve().parent
 VERSION = (ROOT / 'VERSION').read_text().strip()
-NAME = f'paycheck-planner-{VERSION}'
+NAME = f'visual-paycheck-planner-{VERSION}'
 REPO = 'phluschott/financial-htmlapp'
 BRANCH = 'main'
 OUT = ROOT / 'docs' / 'downloads'
@@ -43,7 +43,7 @@ def build_zip(path=None):
 
 
 def write_sums():
-    zips = sorted(OUT.glob('paycheck-planner-*.zip'))
+    zips = sorted(OUT.glob('*paycheck-planner-*.zip'))
     (OUT / 'SHA256SUMS').write_text(''.join(f'{sha256(p)}  {p.name}\n' for p in zips))
 
 

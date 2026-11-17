@@ -1,10 +1,10 @@
-# Paycheck Planner
+# Visual Paycheck Planner
 
 > **1. It is only a visual aid.** It shows you where your money is going and when. That is all it is designed to do.
 > 
 > **2. It is not financial advice.** Nothing in this app, this repository, or its website is financial, tax, legal, or investment advice.
 
-Paycheck Planner splits your month by paycheck. For each paycheck it lists everything that comes out before the next one, in date order, with a running "left after" figure, so you can see what each paycheck has to cover, when, and how much is left over.
+Visual Paycheck Planner splits your month by paycheck. For each paycheck it lists everything that comes out before the next one, in date order, with a running "left after" figure, so you can see what each paycheck has to cover, when, and how much is left over.
 
 It is built for the "what does the next two weeks look like?" problem: bills pull money on different days, you are paid every other week, and it is hard to hold it all in your head.
 
@@ -16,6 +16,8 @@ It is built for the "what does the next two weeks look like?" problem: bills pul
 - **Date order with a running balance.** See the day it gets tight.
 - **Left to play with.** Income minus what is due. Send the leftover to savings, a sinking fund, or an extra debt payment with one click.
 - **Whole-month view.** A month with two paychecks is two cards. Your next paycheck is highlighted, and income that has landed is kept separate from income you are only expecting.
+- **Charged to a card.** Mark a subscription or bill as charged to a credit card or loan you track. It is added to that card's payment instead of being paid twice.
+- **Subscriptions at a glance.** A box on the month view totals what you spend on subscriptions in the calendar month.
 - **Sinking funds.** Named buckets (new car, house…) you add to when you choose and pull back from when you need to.
 - **Paid and cleared checkboxes** on every payment.
 - **Spreadsheet export.** Export any month, plus your bills and funds, to `.xlsx`.
@@ -33,11 +35,13 @@ Compare the SHA-256 fingerprint of the file you downloaded with the one publishe
 
 | System | Command |
 |---|---|
-| Windows (PowerShell) | `Get-FileHash .\paycheck-planner-1.0.0.zip -Algorithm SHA256` |
-| macOS | `shasum -a 256 paycheck-planner-1.0.0.zip` |
-| Linux | `sha256sum paycheck-planner-1.0.0.zip` |
+| Windows (PowerShell) | `Get-FileHash .\visual-paycheck-planner-1.0.1.zip -Algorithm SHA256` |
+| macOS | `shasum -a 256 visual-paycheck-planner-1.0.1.zip` |
+| Linux | `sha256sum visual-paycheck-planner-1.0.1.zip` |
 
-**v1.0.0:** `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`
+**v1.0.1:** `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`
+
+Older releases are listed in [`docs/downloads/SHA256SUMS`](docs/downloads/SHA256SUMS) (v1.0.0: `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`).
 
 A matching hash shows the file was not corrupted or altered on the way to you. The build is reproducible: running `python3 build.py` on this source produces a zip with the same hash. The app is three small, readable files (`index.html`, `app.js`, `style.css`), so you can also read exactly what it does.
 
@@ -66,6 +70,10 @@ In **Settings** you can set a password. The data file is then encrypted with AES
 ### Privacy
 
 The app ships with a Content-Security-Policy that blocks every network request from the page, and it contains no analytics or third-party code.
+
+### Updating from an earlier version
+
+Unzip the new version over your existing folder (replace `index.html`, `app.js`, `style.css`). Your `finance-data.json` and `backups` folder are left as they are, and your data opens unchanged.
 
 ## Good to know
 
