@@ -135,6 +135,8 @@ function buildPlan(mk) {
   // payment, so it is only ever counted once. (Occurrences before it.chargeSince keep their old behaviour.)
   const debts = new Map(DB.items.filter(i => i.category === 'Debt payment' && i.active !== false).map(i => [i.id, i]));
   const chargedOn = (it, date) => !!(it.chargeTo && it.category !== 'Debt payment' && debts.has(it.chargeTo) && date >= (it.chargeSince || ''));
+  // "Untracked": paid from an account that is not tracked here. Shown, but never deducted from the paycheck.
+  const isUntracked = (it, date) => it.chargeTo === '_untracked' && it.category !== 'Debt payment' && date >= (it.chargeSince || '');
   for (const it of DB.items) {
     if (it.active === false) continue;
     const dues = occurrences(it, lo, hi);
@@ -142,7 +144,8 @@ function buildPlan(mk) {
     for (const due of dues) {
       if (chargedOn(it, due)) continue;
       const key = it.id + ':' + due, o = DB.occ[key] || {};
-      const h = o.moveTo ? H.find(x => x.date === o.moveTo) : at(due);
+      const unt = isUntracked(it, due);
+      const h = o.moveTo && !unt ? H.find(x => x.date === o.moveTo) : at(due);
       if (!h) continue;
       const base = o.amount !== undefined ? o.amount : itemAmount(it);
       const charges = [];
@@ -161,6 +164,7 @@ function buildPlan(mk) {
       h.lines.push({
         kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
         base, charges, amount: base + sum(charges, c => c.amount), paid: !!o.paid, cleared: !!o.cleared, skip: !!o.skip,
+        untracked: unt, note: unt ? (it.untrackedNote || '') : '',
         needsConfirm: (it.mode === 'ask' && !o.confirmed) || charges.some(c => c.needsConfirm)
       });
     }
@@ -181,9 +185,10 @@ function buildPlan(mk) {
     let run = 0, income = 0, out = 0, minRun = Infinity, minDate = null;
     for (const r of rows) {
       if (r.t === 0) { run += r.amount; income += r.amount; }
+      else if (r.untracked) { /* information only: not deducted */ }
       else if (!r.skip) { run -= r.amount; out += r.amount; }
       r.run = run;
-      if (r.t === 1 && !r.skip && run < minRun) { minRun = run; minDate = r.date; }
+      if (r.t === 1 && !r.skip && !r.untracked && run < minRun) { minRun = run; minDate = r.date; }
     }
     h.rows = rows; h.income = income; h.out = out; h.left = run; h.minRun = minRun; h.minDate = minDate;
     h.landed = h.pays.length ? h.pays.every(p => p.landed) : true;
@@ -444,9 +449,13 @@ function itemForm(id) {
       + fld('Next due date', 'anchor', it.anchor, 'type="date"')
       + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
       + fld('Goes to (e.g. Ally Savings)', 'dest', it.dest || '', '', 'data-showif="category=Transfer"')
-      + sel('Charged to', 'chargeTo', [['', '— Paid directly from the paycheck —'], ...DB.items.filter(d => d.category === 'Debt payment' && d.id !== it.id && d.active !== false).map(d => [d.id, d.name])], it.chargeTo || '', 'data-showif="category=Subscription|Bill|Transfer|Other"')
-      + '<p class="help" data-showif="category=Subscription|Bill|Transfer|Other">If this is charged to a credit card or loan you track here, pick it. The amount is then added to that debt\'s payment instead of coming out of the paycheck on its own, so it is never counted twice.</p>'
+      + sel('Charged to', 'chargeTo', [['', '— Paid directly from the paycheck —'], ...DB.items.filter(d => d.category === 'Debt payment' && d.id !== it.id && d.active !== false).map(d => [d.id, d.name]), ['_untracked', 'Untracked — paid from another account']], it.chargeTo || '', 'data-showif="category=Subscription|Bill|Transfer|Other"')
+      + fld('Which account? (just a note — not tracked)', 'untrackedNote', it.untrackedNote || '', '', 'data-showif="chargeTo=_untracked"')
+      + '<p class="help" data-showif="category=Subscription|Bill|Transfer|Other">If this is charged to a credit card or loan you track here, pick it: the amount is added to that debt\'s payment instead of coming out of the paycheck on its own. Pick <b>Untracked</b> if it is paid from an account you do not track here: it still shows (and counts in the subscriptions total), but is never deducted from your paycheck.</p>'
       + chk('Active', 'active', it.active !== false),
+    after: form => form.elements.category.addEventListener('change', () => {
+      if (form.elements.category.value === 'Debt payment') form.elements.chargeTo.value = '';
+    }),
     onSubmit: fd => {
       if (!fd.get('name').trim()) return 'Name is required.';
       const o = id ? it : { id: uid() }, amount = parseMoney(fd.get('amount'));
@@ -459,7 +468,7 @@ function itemForm(id) {
         const last = debt ? occurrences(debt, addDays(today(), -400), addDays(today(), 1)).pop() : null;
         o.chargeSince = last ? addDays(last, 1) : today();
       }
-      Object.assign(o, { chargeTo, name: fd.get('name').trim(), category: fd.get('category'), mode: fd.get('mode'), amount, freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, dest: fd.get('category') === 'Transfer' ? fd.get('dest').trim() : '', active: fd.get('active') === 'on' });
+      Object.assign(o, { chargeTo, untrackedNote: chargeTo === '_untracked' ? fd.get('untrackedNote').trim() : '', name: fd.get('name').trim(), category: fd.get('category'), mode: fd.get('mode'), amount, freq: fd.get('freq'), anchor: fd.get('anchor') || today(), day2: fd.get('day2') ? +fd.get('day2') : null, dest: fd.get('category') === 'Transfer' ? fd.get('dest').trim() : '', active: fd.get('active') === 'on' });
       if (o.mode === 'ask') o.lastAmount = amount;
       if (!id) DB.items.push(o);
       commit();
@@ -514,6 +523,20 @@ function extraIncomeForm(headDate, id) {
 }
 function lineForm(headDate, key) {
   const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
+  if (l.kind === 'item' && l.untracked) {
+    return modal({
+      title: `${l.name} — ${fmtShort(l.due)}`,
+      body: `<p class="help">Untracked${l.note ? ' (' + esc(l.note) + ')' : ''}: paid from an account that is not tracked here, so it is not deducted from this paycheck.</p>`
+        + money$(l.needsConfirm ? 'Amount this time (confirm)' : 'Amount', 'amount', l.base)
+        + chk('Skip this time (not charged / cancelled)', 'skip', l.skip),
+      onSubmit: fd => {
+        const amount = parseMoney(fd.get('amount')); if (amount < 0) return 'Enter an amount.';
+        setOcc(l.key, { amount, confirmed: true, skip: fd.get('skip') === 'on' });
+        if (l.it.mode === 'ask') l.it.lastAmount = amount;
+        commit();
+      }
+    });
+  }
   if (l.kind === 'item') {
     const natural = (lastPlan.all.find(x => l.due >= x.date && l.due < x.end) || h).date;
     return modal({
@@ -646,6 +669,7 @@ function chargedCell(i) {
     const n = DB.items.filter(c => c.chargeTo === i.id && c.active !== false).length;
     return n ? `<span class="muted small">${n} item${n === 1 ? '' : 's'} charged here</span>` : '<span class="muted">—</span>';
   }
+  if (i.chargeTo === '_untracked') return `<b>Untracked</b>${i.untrackedNote ? `<div class="muted small">${esc(i.untrackedNote)}</div>` : ''}`;
   const d = i.chargeTo && byId(DB.items, i.chargeTo);
   return d && d.category === 'Debt payment' ? `<b>${esc(d.name)}</b>` : '<span class="muted">Paycheck (directly)</span>';
 }
@@ -700,6 +724,12 @@ function rowHtml(h, r) {
   if (r.kind === 'fund') {
     return `<tr class="${r.t === 0 ? 'inc' : ''}"><td class="small">${d}</td><td>${esc(r.name)}${r.m.note ? `<div class="muted small">${esc(r.m.note)}</div>` : ''}</td><td class="num ${r.t === 0 ? 'pos' : ''}">${r.t === 0 ? '+' : '−'}${money(r.amount)}</td><td class="num">${money(r.run)}</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link danger" data-act="del-move" data-id="${r.m.id}">✕</button></td></tr>`;
   }
+  if (r.untracked) {
+    return `<tr class="untracked${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
+    <td class="name">${esc(r.name)} <span class="chip proj">untracked</span>${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.note ? ' · paid from ' + esc(r.note) : ' · paid from another account'}</div></td>
+    <td class="num" title="Not deducted from this paycheck">${r.skip ? '—' : money(r.base)}</td><td class="num muted">—</td><td class="chk"></td><td class="chk"></td>
+    <td class="num"><button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
+  }
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
     <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
@@ -712,9 +742,9 @@ function checkCard(h, plan) {
   const isNext = h.date === plan.next, t = today();
   const cur = h.date <= t && t < h.end;
   const badge = isNext ? '<span class="badge next">Next paycheck</span>' : (plan.inProgress === h ? '<span class="badge">Still in progress</span>' : cur ? '<span class="badge">Current period</span>' : '');
-  const n = h.rows.filter(r => r.t === 1 && !r.skip).length;
+  const n = h.rows.filter(r => r.t === 1 && !r.skip && !r.untracked).length, u = h.rows.filter(r => r.untracked && !r.skip).length;
   return `<div class="card check${isNext ? ' next' : ''}" id="chk-${h.date}">
-    <div class="head"><div><h2>${fmtShort(h.date)} paycheck ${badge}</h2><span class="muted small">Pays for ${fmtDate(h.date)} – ${fmtDate(addDays(h.end, -1))} · ${n} payment${n === 1 ? '' : 's'}</span></div>
+    <div class="head"><div><h2>${fmtShort(h.date)} paycheck ${badge}</h2><span class="muted small">Pays for ${fmtDate(h.date)} – ${fmtDate(addDays(h.end, -1))} · ${n} payment${n === 1 ? '' : 's'}${u ? ` · ${u} untracked` : ''}</span></div>
       <div class="leftbox"><div class="muted small">Left to play with</div><div class="big2 ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div></div></div>
     ${h.minRun < 0 ? `<div class="banner err small">Runs short by ${money(-h.minRun)} on ${fmtShort(h.minDate)} unless something moves.</div>` : ''}
     <div class="tbl-wrap"><table class="tl"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Left after</th><th class="chk">Paid</th><th class="chk">Clrd</th><th></th></tr></thead><tbody>${h.rows.map(r => rowHtml(h, r)).join('')}</tbody></table></div>
@@ -735,7 +765,8 @@ function subscriptionsFor(mk) {
       list.push({ it, due, amount: o.amount !== undefined ? o.amount : itemAmount(it) });
     }
   }
-  return { list, total: sum(list, x => x.amount) };
+  const onCard = x => { const d = x.it.chargeTo && byId(DB.items, x.it.chargeTo); return !!(d && d.category === 'Debt payment' && d.active !== false); };
+  return { list, total: sum(list, x => x.amount), cards: list.filter(onCard).length, untracked: list.filter(x => x.it.chargeTo === '_untracked').length };
 }
 function viewPlan() {
   const mk = planMonth(), plan = buildPlan(mk); lastPlan = plan;
@@ -745,14 +776,14 @@ function viewPlan() {
   const income = sum(inMonth, h => h.income), out = sum(inMonth, h => h.out);
   const landed = sum(inMonth, h => sum(h.rows.filter(r => r.t === 0 && (r.kind !== 'pay' || r.pay.landed)), r => r.amount));
   const cats = {};
-  inMonth.forEach(h => h.rows.filter(r => r.t === 1 && !r.skip).forEach(r => { cats[r.category] = (cats[r.category] || 0) + r.amount; }));
+  inMonth.forEach(h => h.rows.filter(r => r.t === 1 && !r.skip && !r.untracked).forEach(r => { cats[r.category] = (cats[r.category] || 0) + r.amount; }));
   const catRows = Object.entries(cats).sort((a, b) => b[1] - a[1]).map(([c, v]) => `<span class="catchip">${esc(c)} <b>${money(v)}</b>${income ? ` <span class="muted">${Math.round(v / income * 100)}%</span>` : ''}</span>`).join('');
   const subs = subscriptionsFor(mk);
   const summary = `<div class="card"><div class="stats" style="margin-top:0">
       <div class="stat"><div class="k">Income this month</div><div class="v">${money(income)}</div><div class="muted small">${landed >= income ? 'all landed' : `${money(landed)} landed · ${money(income - landed)} expected`}</div></div>
       <div class="stat"><div class="k">Going out</div><div class="v">${money(out)}</div></div>
       <div class="stat"><div class="k">Left to play with</div><div class="v ${income - out < 0 ? 'neg' : 'pos'}">${money(income - out)}</div></div>
-      <div class="stat" title="${esc(subs.list.map(x => `${x.it.name} ${money(x.amount)}`).join(', '))}"><div class="k">Subscriptions in ${MONTH_NAMES[+mk.slice(5) - 1]}</div><div class="v">${money(subs.total)}</div><div class="muted small">${subs.list.length} subscription${subs.list.length === 1 ? '' : 's'}${subs.list.some(x => x.it.chargeTo) ? ' · some on cards' : ''}</div></div></div>
+      <div class="stat" title="${esc(subs.list.map(x => `${x.it.name} ${money(x.amount)}`).join(', '))}"><div class="k">Subscriptions in ${MONTH_NAMES[+mk.slice(5) - 1]}</div><div class="v">${money(subs.total)}</div><div class="muted small">${subs.list.length} subscription${subs.list.length === 1 ? '' : 's'}${subs.cards ? ` · ${subs.cards} on cards` : ''}${subs.untracked ? ` · ${subs.untracked} untracked` : ''}</div></div></div>
       ${catRows ? `<div class="cats">${catRows}</div>` : ''}</div>`;
   return nav + summary + (plan.heads.length ? plan.heads.map(h => checkCard(h, plan)).join('') : '<div class="card muted">No paychecks fall in this month.</div>');
 }
@@ -801,9 +832,9 @@ function buildXlsx() {
   const inMonth = plan.heads.filter(h => h !== plan.inProgress);
   const planRows = [['Paycheck', 'Date', 'What', 'Category', 'Goes to', 'Amount (+in / −out)', 'Left after', 'Paid', 'Cleared', 'Includes']];
   for (const h of plan.heads) for (const r of h.rows) {
-    planRows.push([h.date, r.date, r.name, r.category || (r.t === 0 ? 'Income' : ''), r.dest || '', r.skip ? 0 : d(r.t === 0 ? r.amount : -r.amount), r.skip ? '' : d(r.run),
-      r.t === 1 ? (r.paid ? 'Y' : 'N') : (r.kind === 'pay' ? (r.pay.landed ? 'Landed' : 'Expected') : ''), r.t === 1 && r.kind !== 'fund' ? (r.cleared ? 'Y' : 'N') : '',
-      r.charges && r.charges.length ? `${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + ') : '']);
+    planRows.push([h.date, r.date, r.name, r.category || (r.t === 0 ? 'Income' : ''), r.dest || '', r.skip || r.untracked ? 0 : d(r.t === 0 ? r.amount : -r.amount), r.skip || r.untracked ? '' : d(r.run),
+      r.untracked ? 'Untracked' : r.t === 1 ? (r.paid ? 'Y' : 'N') : (r.kind === 'pay' ? (r.pay.landed ? 'Landed' : 'Expected') : ''), r.t === 1 && r.kind !== 'fund' && !r.untracked ? (r.cleared ? 'Y' : 'N') : '',
+      r.untracked ? `${money(r.base)} paid from ${r.note || 'another account'} (not deducted)` : r.charges && r.charges.length ? `${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + ') : '']);
   }
   planRows.push([], ['Left to play with by paycheck']);
   for (const h of plan.heads) planRows.push([h.date, '', 'Income ' + d(h.income) + ' · Out ' + d(h.out), '', '', d(h.left)]);

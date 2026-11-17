@@ -34,6 +34,10 @@ A serverless, offline, single-folder browser app: **"I have a paycheck coming �
 - **Subscriptions box.** Fourth stat box on the Plan summary: total of all `Subscription` items falling due in the *calendar month* shown (`subscriptionsFor`), independent of paycheck windows, including ones charged to a card; skipped occurrences excluded; tooltip lists them. The category chips below are by paycheck window, so the two can differ.
 - App renamed to "Visual Paycheck Planner" in 1.0.1 (zip is `visual-paycheck-planner-<ver>.zip`; the 1.0.0 zip keeps its old name and must never be altered). 1.0.1 hash `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`. v1.0.0 data files open unchanged.
 
+## In progress / unreleased (branch `claude/jolly-edison-x3thm6`, after v1.0.1)
+- **"Untracked" items (2026-11-17).** A non-debt item can be set to *Untracked — paid from another account* (value `_untracked` in `item.chargeTo`, optional free-text `item.untrackedNote`, e.g. "Chase Visa"). It shows on the plan as a faded italic line with an "untracked" tag, no checkboxes and no running balance, and is NOT deducted from left / Going out / category chips / "N payments" (card header says "· N untracked"). It still counts in the calendar-month **Subscriptions box** (subtext "· N untracked"). Same `chargeSince` history protection as card charges (set to today when changed). Edit modal for such a line = amount + skip only. Export: Paid column says "Untracked", amount blank, Includes column notes it. Code: `isUntracked` in `buildPlan`, `itemForm`, `lineForm`, `rowHtml`, `chargedCell`, `subscriptionsFor`. The user named the option "Untracked" (we discussed "Paid elsewhere" first).
+- Not yet versioned/released: user has not asked to cut v1.0.2. `build.py --check` will report 1.0.1 as different until the next version is built (never alter a published zip).
+
 ## Open to-dos
 1. (Done in 1.0.1) rename to "Visual Paycheck Planner".
 2. No LICENSE file; landing page says "Free". Ask the user which license.
