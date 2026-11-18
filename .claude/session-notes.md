@@ -2,6 +2,14 @@
 
 Last updated: 2026-10-27. Repo: phluschott/financial-htmlapp. Work branch: `claude/jolly-edison-x3thm6` (restart it from latest `main` each session; earlier PRs #1 and #2 are merged).
 
+## BOOKMARK — last place we worked on the app (2026-11-18)
+Resume the **app** here after the Google Sheets tangent:
+- Branch `claude/jolly-edison-x3thm6`, commit `a19f24ca7f43` (app.js last changed in `233b038690f0`). Pushed, **not merged to main**.
+- `main` = v1.0.1 (released: charged-to, subscriptions box, rename). Branch adds **Untracked** items on top; no version bump, no zip, no release yet — the user said "wait until we have more" before cutting the next release.
+- User has an unreleased dev zip (`visual-paycheck-planner-1.0.1-dev.zip`, About shows "1.0.1-dev"); rebuild it from the branch if asked (copy index.html/app.js/style.css/USAGE.txt, set VERSION to `1.0.1-dev`, deterministic stored zip, outside the repo).
+- Next release (v1.0.2+): merge the branch, bump `VERSION` + `const VERSION`, `python3 build.py`, write `releases/v<ver>.md`, update README hash line, user publishes the GitHub release manually.
+- **Tangent started 2026-11-18:** assess/build a Google Sheets version so Claude can produce a report the day before each paycheck lands. This is a separate project; it must not change the app files. See assessment in the chat; if a Sheets project is built, keep it in its own folder (e.g. `sheets/`) or repo.
+
 ## What this is
 A serverless, offline, single-folder browser app: **"I have a paycheck coming — what do I need to pay out of it, when, and how much is left to play with?"** Users download a zip (GitHub release v1.0.0), unzip, double-click `index.html`. Data lives in `finance-data.json` beside the pages.
 
