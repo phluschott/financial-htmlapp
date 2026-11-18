@@ -5,7 +5,7 @@ Last updated: 2026-10-27. Repo: phluschott/financial-htmlapp. Work branch: `clau
 ## BOOKMARK — last place we worked on the app (2026-11-18)
 - **v1.0.2 prepared and merged to `main`** (zip `visual-paycheck-planner-1.0.2.zip`, hash in `docs/downloads/SHA256SUMS`; release notes `releases/v1.0.2.md`). The user publishes the GitHub release manually (`gh release create` is blocked; tag `v1.0.2`, target `main`, attach the zip).
 - v1.0.2 = **Next paycheck report** (button on the Plan page + per-card "Report" link; plain-text summary to copy/download; banner on the Plan page when the next paycheck lands today/tomorrow) + **Untracked** items (see below).
-- Tangent in progress (separate from the app): a **Google Sheets version** so Claude can produce a report the day before each paycheck. Assessed in chat: needs Apps Script triggers (the Claude sidebar/add-on cannot schedule; "Claude Duet" was not found as a product name — the user has *Claude for Google Workspace* or the API-key *Claude for Sheets* add-on; ask which). Open questions asked: which Claude product, email vs in-sheet, whether Sheets replaces the app as the source of truth. The user then asked for the in-app "next paycheck report" instead and rolled out 1.0.2; the Sheets build has NOT been started. Keep any Sheets work in its own folder (e.g. `sheets/`) so it never changes the app files.
+- Google Sheets tangent: **abandoned by the user (2026-11-18).** The in-app next paycheck report is the chosen approach; do not start a Sheets version unless asked again.
 - User's unreleased dev zip (1.0.1-dev) is obsolete now that 1.0.2 shipped.
 
 ## What this is
