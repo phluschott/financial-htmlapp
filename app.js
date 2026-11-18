@@ -29,7 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
-const VERSION = '1.0.1';
+const VERSION = '1.0.2';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -340,9 +340,9 @@ async function connectFolder(handle) {
 const dlg = $('#modal');
 function closeModal(val) { const r = dlg._resolve; dlg._resolve = null; if (dlg.open) dlg.close(); if (r) r(val); }
 dlg.addEventListener('close', () => { if (dlg._resolve) { const r = dlg._resolve; dlg._resolve = null; r(false); } });
-function modal({ title, body, submit = 'Save', onSubmit, after }) {
+function modal({ title, body, submit = 'Save', cancel = 'Cancel', onSubmit, after }) {
   return new Promise(resolve => {
-    dlg.innerHTML = `<form><h2>${esc(title)}</h2>${body}<div class="error" id="merr"></div><div class="actions"><button type="button" data-act="mclose">Cancel</button>${submit ? `<button class="primary" type="submit">${esc(submit)}</button>` : ''}</div></form>`;
+    dlg.innerHTML = `<form><h2>${esc(title)}</h2>${body}<div class="error" id="merr"></div><div class="actions"><button type="button" data-act="mclose">${esc(cancel)}</button>${submit ? `<button class="primary" type="submit">${esc(submit)}</button>` : ''}</div></form>`;
     dlg._resolve = resolve;
     const form = dlg.querySelector('form');
     form.addEventListener('submit', async ev => {
@@ -738,6 +738,50 @@ function rowHtml(h, r) {
     <td class="num"><button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
 }
 
+// Plain-text summary of one paycheck, for copying or saving.
+function reportText(h) {
+  const L = [], neg = n => (n < 0 ? '-' : '') + money(Math.abs(n)), month = monthKey(h.date);
+  const payments = h.rows.filter(r => r.t === 1 && !r.skip && !r.untracked);
+  L.push(`PAYCHECK REPORT: ${fmtShort(h.date)}, ${h.date.slice(0, 4)}${h.date === nextPayDate() ? ' (next paycheck)' : ''}`);
+  L.push(`Covers ${fmtDate(h.date)} to ${fmtDate(addDays(h.end, -1))}. Prepared ${fmtDate(today())}.`, '', 'INCOME');
+  for (const r of h.rows.filter(r => r.t === 0)) {
+    const tag = r.kind === 'pay' ? (r.pay.landed ? ' (landed)' : ' (expected)') : r.kind === 'xpay' ? ' (landed)' : '';
+    L.push(`- ${r.name}: +${money(r.amount)}${tag}`);
+  }
+  L.push('', 'PAYMENTS, IN DATE ORDER');
+  if (!payments.length) L.push('- Nothing due in this period.');
+  for (const r of payments) {
+    L.push(`- ${fmtShort(r.date)}: ${r.name} (${r.category}) -${money(r.amount)}, left ${neg(r.run)}${r.paid ? ' [paid]' : ''}${r.needsConfirm ? ' [amount needs confirming]' : ''}`);
+    if (r.charges && r.charges.length) L.push(`    includes ${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + '));
+  }
+  const untracked = h.rows.filter(r => r.untracked && !r.skip);
+  if (untracked.length) {
+    L.push('', 'PAID FROM ANOTHER ACCOUNT (untracked, not deducted from this paycheck)');
+    for (const r of untracked) L.push(`- ${fmtShort(r.date)}: ${r.name} ${money(r.base)}${r.note ? ' (' + r.note + ')' : ''}`);
+  }
+  const skipped = h.rows.filter(r => r.t === 1 && r.skip);
+  if (skipped.length) L.push('', 'SKIPPED THIS TIME: ' + skipped.map(r => r.name).join(', '));
+  L.push('', `LEFT TO PLAY WITH: ${neg(h.left)}   (income ${money(h.income)} minus payments ${money(h.out)})`);
+  if (h.minRun < 0) L.push(`HEADS-UP: runs short by ${money(-h.minRun)} on ${fmtShort(h.minDate)} unless something moves.`);
+  const confirm = payments.filter(r => r.needsConfirm);
+  if (confirm.length) L.push('NEEDS CONFIRMING: ' + confirm.map(r => r.name).join(', '));
+  const subs = subscriptionsFor(month);
+  L.push('', `SUBSCRIPTIONS IN ${MONTH_NAMES[+month.slice(5) - 1].toUpperCase()}: ${money(subs.total)} across ${subs.list.length}`);
+  if (subs.list.length) L.push(subs.list.map(x => `${x.it.name} ${money(x.amount)}`).join(', '));
+  L.push('', 'Visual aid only. Not financial advice.');
+  return L.join('\n');
+}
+function openReport(date) {
+  if (!date) return alert('No upcoming paycheck found. Add a fixed income source in Setup first.');
+  const pl = buildPlan(monthKey(date)), h = pl.all.find(x => x.date === date);
+  if (!h) return alert('Could not build that report.');
+  return modal({
+    title: `Report: ${fmtShort(date)} paycheck`, submit: null, cancel: 'Close', onSubmit() { },
+    body: `<p class="help">A plain-text summary you can copy or save. If you paste it into an AI assistant or share it, remember it contains your financial details.</p>
+      <textarea id="report-text" readonly rows="18" style="font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:13px">${esc(reportText(h))}</textarea>
+      <div style="margin-top:8px"><button type="button" class="primary" data-act="report-copy">Copy to clipboard</button> <button type="button" data-act="report-save" data-date="${date}">Download .txt</button> <span class="pos small" id="report-msg"></span></div>`
+  });
+}
 function checkCard(h, plan) {
   const isNext = h.date === plan.next, t = today();
   const cur = h.date <= t && t < h.end;
@@ -751,7 +795,8 @@ function checkCard(h, plan) {
     <div class="actions" style="justify-content:flex-start">
       <button data-act="add-line" data-head="${h.date}">+ Add payment / allocation</button>
       ${h.left > 0 ? `<button class="primary" data-act="add-line" data-head="${h.date}" data-amt="${h.left}">Allocate what’s left (${money(h.left)})</button>` : ''}
-      <button class="link" data-act="add-xpay" data-head="${h.date}">+ Extra income</button></div></div>`;
+      <button class="link" data-act="add-xpay" data-head="${h.date}">+ Extra income</button>
+      <button class="link" data-act="report" data-head="${h.date}">Report</button></div></div>`;
 }
 
 // Subscriptions falling due in a calendar month, whichever paycheck or card they are paid through.
@@ -770,8 +815,10 @@ function subscriptionsFor(mk) {
 }
 function viewPlan() {
   const mk = planMonth(), plan = buildPlan(mk); lastPlan = plan;
-  const nav = `<div class="monthnav"><button data-act="month" data-d="-1">‹</button><h2>${monthLabel(mk)}</h2><button data-act="month" data-d="1">›</button><button class="link" data-act="month-today">Jump to next paycheck</button></div>`;
+  const nav = `<div class="monthnav"><button data-act="month" data-d="-1">‹</button><h2>${monthLabel(mk)}</h2><button data-act="month" data-d="1">›</button><button class="link" data-act="month-today">Jump to next paycheck</button><button data-act="report-next">Next paycheck report</button></div>`;
   if (!plan.all.length) return nav + `<div class="card"><p>No paychecks to show. Add a <b>fixed income source</b> in Setup and your paychecks appear here automatically.</p><button class="primary" data-act="nav" data-v="setup">Go to Setup</button></div>`;
+  const soon = plan.next === today() ? 'today' : plan.next === addDays(today(), 1) ? 'tomorrow' : '';
+  const remind = soon ? `<div class="banner"><span>Your next paycheck lands <b>${soon}</b> (${fmtShort(plan.next)}).</span><button class="primary" data-act="report" data-head="${plan.next}">Open its report</button></div>` : '';
   const inMonth = plan.heads.filter(h => h !== plan.inProgress);
   const income = sum(inMonth, h => h.income), out = sum(inMonth, h => h.out);
   const landed = sum(inMonth, h => sum(h.rows.filter(r => r.t === 0 && (r.kind !== 'pay' || r.pay.landed)), r => r.amount));
@@ -785,7 +832,7 @@ function viewPlan() {
       <div class="stat"><div class="k">Left to play with</div><div class="v ${income - out < 0 ? 'neg' : 'pos'}">${money(income - out)}</div></div>
       <div class="stat" title="${esc(subs.list.map(x => `${x.it.name} ${money(x.amount)}`).join(', '))}"><div class="k">Subscriptions in ${MONTH_NAMES[+mk.slice(5) - 1]}</div><div class="v">${money(subs.total)}</div><div class="muted small">${subs.list.length} subscription${subs.list.length === 1 ? '' : 's'}${subs.cards ? ` · ${subs.cards} on cards` : ''}${subs.untracked ? ` · ${subs.untracked} untracked` : ''}</div></div></div>
       ${catRows ? `<div class="cats">${catRows}</div>` : ''}</div>`;
-  return nav + summary + (plan.heads.length ? plan.heads.map(h => checkCard(h, plan)).join('') : '<div class="card muted">No paychecks fall in this month.</div>');
+  return nav + remind + summary + (plan.heads.length ? plan.heads.map(h => checkCard(h, plan)).join('') : '<div class="card muted">No paychecks fall in this month.</div>');
 }
 
 function viewFunds() {
@@ -872,6 +919,14 @@ const A = {
   'pw-change': () => passwordForm('Change password'),
   'pw-remove': () => { if (confirm('Remove the password? The data file will be stored unencrypted.')) { ENC = null; commit(); } },
   month: ({ d }) => { state.month = monthShift(planMonth(), +d); render(); },
+  report: ({ head }) => openReport(head),
+  'report-next': () => openReport(nextPayDate()),
+  'report-copy': async () => {
+    const ta = $('#report-text'); ta.select(); let ok = false;
+    try { await navigator.clipboard.writeText(ta.value); ok = true; } catch { try { ok = document.execCommand('copy'); } catch { /* fall through */ } }
+    $('#report-msg').textContent = ok ? 'Copied ✓' : 'Select the text and press Ctrl/Cmd+C';
+  },
+  'report-save': ({ date }) => download(`paycheck-report-${date}.txt`, $('#report-text').value, 'text/plain'),
   'month-today': () => { state.month = null; state.scroll = true; render(); },
   'add-inc': () => incomeForm(), 'edit-inc': ({ id }) => incomeForm(id),
   'del-inc': ({ id }) => { if (confirm('Delete this income source? Its paychecks disappear from every month, including past ones. (Mark it inactive instead to keep history.)')) { DB.incomes = DB.incomes.filter(i => i.id !== id); commit(); } },

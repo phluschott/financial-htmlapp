@@ -3,12 +3,10 @@
 Last updated: 2026-10-27. Repo: phluschott/financial-htmlapp. Work branch: `claude/jolly-edison-x3thm6` (restart it from latest `main` each session; earlier PRs #1 and #2 are merged).
 
 ## BOOKMARK — last place we worked on the app (2026-11-18)
-Resume the **app** here after the Google Sheets tangent:
-- Branch `claude/jolly-edison-x3thm6`, commit `a19f24ca7f43` (app.js last changed in `233b038690f0`). Pushed, **not merged to main**.
-- `main` = v1.0.1 (released: charged-to, subscriptions box, rename). Branch adds **Untracked** items on top; no version bump, no zip, no release yet — the user said "wait until we have more" before cutting the next release.
-- User has an unreleased dev zip (`visual-paycheck-planner-1.0.1-dev.zip`, About shows "1.0.1-dev"); rebuild it from the branch if asked (copy index.html/app.js/style.css/USAGE.txt, set VERSION to `1.0.1-dev`, deterministic stored zip, outside the repo).
-- Next release (v1.0.2+): merge the branch, bump `VERSION` + `const VERSION`, `python3 build.py`, write `releases/v<ver>.md`, update README hash line, user publishes the GitHub release manually.
-- **Tangent started 2026-11-18:** assess/build a Google Sheets version so Claude can produce a report the day before each paycheck lands. This is a separate project; it must not change the app files. See assessment in the chat; if a Sheets project is built, keep it in its own folder (e.g. `sheets/`) or repo.
+- **v1.0.2 prepared and merged to `main`** (zip `visual-paycheck-planner-1.0.2.zip`, hash in `docs/downloads/SHA256SUMS`; release notes `releases/v1.0.2.md`). The user publishes the GitHub release manually (`gh release create` is blocked; tag `v1.0.2`, target `main`, attach the zip).
+- v1.0.2 = **Next paycheck report** (button on the Plan page + per-card "Report" link; plain-text summary to copy/download; banner on the Plan page when the next paycheck lands today/tomorrow) + **Untracked** items (see below).
+- Tangent in progress (separate from the app): a **Google Sheets version** so Claude can produce a report the day before each paycheck. Assessed in chat: needs Apps Script triggers (the Claude sidebar/add-on cannot schedule; "Claude Duet" was not found as a product name — the user has *Claude for Google Workspace* or the API-key *Claude for Sheets* add-on; ask which). Open questions asked: which Claude product, email vs in-sheet, whether Sheets replaces the app as the source of truth. The user then asked for the in-app "next paycheck report" instead and rolled out 1.0.2; the Sheets build has NOT been started. Keep any Sheets work in its own folder (e.g. `sheets/`) so it never changes the app files.
+- User's unreleased dev zip (1.0.1-dev) is obsolete now that 1.0.2 shipped.
 
 ## What this is
 A serverless, offline, single-folder browser app: **"I have a paycheck coming — what do I need to pay out of it, when, and how much is left to play with?"** Users download a zip (GitHub release v1.0.0), unzip, double-click `index.html`. Data lives in `finance-data.json` beside the pages.
@@ -42,9 +40,9 @@ A serverless, offline, single-folder browser app: **"I have a paycheck coming �
 - **Subscriptions box.** Fourth stat box on the Plan summary: total of all `Subscription` items falling due in the *calendar month* shown (`subscriptionsFor`), independent of paycheck windows, including ones charged to a card; skipped occurrences excluded; tooltip lists them. The category chips below are by paycheck window, so the two can differ.
 - App renamed to "Visual Paycheck Planner" in 1.0.1 (zip is `visual-paycheck-planner-<ver>.zip`; the 1.0.0 zip keeps its old name and must never be altered). 1.0.1 hash `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`. v1.0.0 data files open unchanged.
 
-## In progress / unreleased (branch `claude/jolly-edison-x3thm6`, after v1.0.1)
+## Shipped in v1.0.2
 - **"Untracked" items (2026-11-17).** A non-debt item can be set to *Untracked — paid from another account* (value `_untracked` in `item.chargeTo`, optional free-text `item.untrackedNote`, e.g. "Chase Visa"). It shows on the plan as a faded italic line with an "untracked" tag, no checkboxes and no running balance, and is NOT deducted from left / Going out / category chips / "N payments" (card header says "· N untracked"). It still counts in the calendar-month **Subscriptions box** (subtext "· N untracked"). Same `chargeSince` history protection as card charges (set to today when changed). Edit modal for such a line = amount + skip only. Export: Paid column says "Untracked", amount blank, Includes column notes it. Code: `isUntracked` in `buildPlan`, `itemForm`, `lineForm`, `rowHtml`, `chargedCell`, `subscriptionsFor`. The user named the option "Untracked" (we discussed "Paid elsewhere" first).
-- Not yet versioned/released: user has not asked to cut v1.0.2. `build.py --check` will report 1.0.1 as different until the next version is built (never alter a published zip).
+- v1.0.2 also adds the paycheck report: `reportText(h)` / `openReport(date)` / actions `report`, `report-next`, `report-copy`, `report-save`; `modal()` now takes an optional `cancel` label. Banner logic is in `viewPlan` (`soon`/`remind`). Report text sections: INCOME, PAYMENTS IN DATE ORDER, PAID FROM ANOTHER ACCOUNT (untracked), SKIPPED, LEFT TO PLAY WITH, HEADS-UP (runs short), NEEDS CONFIRMING, SUBSCRIPTIONS IN <MONTH>, disclaimer.
 
 ## Open to-dos
 1. (Done in 1.0.1) rename to "Visual Paycheck Planner".
