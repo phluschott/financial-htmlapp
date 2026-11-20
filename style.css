@@ -104,3 +104,6 @@ table.tl td.name { min-width: 130px; }
 @media (max-width: 640px) { .big2 { font-size: 22px; } table.tl th:nth-child(4), table.tl td:nth-child(4) { display: none; } }
 tr.untracked td { opacity: .6; }
 tr.untracked td.name { font-style: italic; }
+tr.sub td { background: color-mix(in srgb, var(--muted) 6%, transparent); font-size: 13px; padding-top: 4px; padding-bottom: 4px; }
+tr.sub td.name { padding-left: 24px; color: var(--muted); }
+tr.sub.info td { opacity: .85; }

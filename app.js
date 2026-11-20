@@ -29,7 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
-const VERSION = '1.0.2';
+const VERSION = '1.0.3';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -147,7 +147,17 @@ function buildPlan(mk) {
       const unt = isUntracked(it, due);
       const h = o.moveTo && !unt ? H.find(x => x.date === o.moveTo) : at(due);
       if (!h) continue;
-      const base = o.amount !== undefined ? o.amount : itemAmount(it);
+      const baseDue = o.amount !== undefined ? o.amount : itemAmount(it);
+      // Payments toward this due date nest under the debt, like a ledger. They apply to this due date only and
+      // reduce what is still to pay. Each is deducted on the paycheck it was paid from (p.head, else the one
+      // whose period holds its date); if that is another paycheck, it shows there and as a note here.
+      const partials = (o.partials || []).map((p, i) => {
+        const ph = (p.head && H.find(x => x.date === p.head)) || at(p.date) || h;
+        return { ...p, i, ph: ph.date, here: ph === h };
+      });
+      const paidSoFar = sum(partials, p => p.amount);
+      const base = Math.max(baseDue - paidSoFar, 0), over = Math.max(paidSoFar - baseDue, 0);
+      const mainSd = due < h.date ? h.date : due;
       const charges = [];
       if (it.category === 'Debt payment') {
         const prev = history[history.indexOf(due) - 1] || addDays(due, -31);
@@ -163,10 +173,19 @@ function buildPlan(mk) {
       }
       h.lines.push({
         kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
-        base, charges, amount: base + sum(charges, c => c.amount), paid: !!o.paid, cleared: !!o.cleared, skip: !!o.skip,
+        grp: key, ord: 0, base, baseDue, partials, paidSoFar, over, charges, amount: base + sum(charges, c => c.amount),
+        paid: !!o.paid || (paidSoFar > 0 && base === 0 && !charges.length), cleared: !!o.cleared, skip: !!o.skip,
         untracked: unt, note: unt ? (it.untrackedNote || '') : '',
         needsConfirm: (it.mode === 'ask' && !o.confirmed) || charges.some(c => c.needsConfirm)
       });
+      for (const p of partials) {
+        (H.find(x => x.date === p.ph) || h).lines.push({
+          kind: 'partial', key: key + '#' + p.i, parentKey: key, parentHead: h.date, parentDue: due, here: p.here,
+          name: p.here ? it.name + ' (payment)' : it.name + ' (payment toward ' + fmtShort(due) + ')',
+          category: it.category, due: p.date, amount: p.amount, paid: true, cleared: false, skip: false,
+          sortDate: p.here ? mainSd : undefined, grp: p.here ? key : undefined, ord: 1 + p.i
+        });
+      }
     }
   }
   for (const x of DB.extras) { const h = H.find(h => h.date === x.headDate); if (h) h.lines.push({ kind: 'extra', key: x.id, x, due: x.date, name: x.name, category: x.category, dest: x.dest, amount: x.amount, paid: x.paid, cleared: x.cleared, skip: false }); }
@@ -180,8 +199,8 @@ function buildPlan(mk) {
     h.moves.forEach(m => { const f = byId(DB.funds, m.fundId) || { name: '?' }; rows.push({ t: m.amount < 0 ? 0 : 1, date: m.date, kind: 'fund', m, name: (m.amount < 0 ? 'From fund: ' : 'To fund: ') + f.name, category: 'Sinking fund', amount: Math.abs(m.amount) }); });
     h.lines.forEach(l => rows.push({ ...l, t: 1, date: l.due }));
     // Outgoing rows dated before their paycheck are paid from it, so they sort no earlier than the paycheck date.
-    rows.forEach(r => { r.sd = r.t === 1 && r.date < h.date ? h.date : r.date; });
-    rows.sort((a, b) => a.sd.localeCompare(b.sd) || a.t - b.t || a.name.localeCompare(b.name));
+    rows.forEach(r => { r.sd = r.sortDate || (r.t === 1 && r.date < h.date ? h.date : r.date); });
+    rows.sort((a, b) => a.sd.localeCompare(b.sd) || a.t - b.t || (a.grp || a.name).localeCompare(b.grp || b.name) || (a.ord || 0) - (b.ord || 0) || a.name.localeCompare(b.name));
     let run = 0, income = 0, out = 0, minRun = Infinity, minDate = null;
     for (const r of rows) {
       if (r.t === 0) { run += r.amount; income += r.amount; }
@@ -521,13 +540,34 @@ function extraIncomeForm(headDate, id) {
     }
   });
 }
+const partText = r => r.paidSoFar ? `${money(r.baseDue)} due, ${money(r.paidSoFar)} paid, ${r.over ? 'overpaid by ' + money(r.over) : money(r.base) + ' to go'}` : '';
+function partForm(headDate, key) {
+  const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
+  return modal({
+    title: `Payments: ${l.name}`,
+    body: `<p class="help">Due ${fmtShort(l.due)}. A payment applies to this due date only; the next due date goes back to the usual amount. The payment is listed under this debt, and its amount comes out of the paycheck you pick below.</p>`
+      + money$('Amount due this time (change it if the real balance is different)', 'due', l.baseDue)
+      + (l.partials.length ? '<p class="help" style="margin-bottom:4px">Already paid toward this due date. Change which paycheck it came out of, or tick to remove:</p>' + l.partials.map(p => `<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px"><label class="check" style="margin:0;flex:1"><input type="checkbox" name="rm${p.i}"> ${fmtShort(p.date)}: ${money(p.amount)}</label><select name="ph${p.i}" style="width:auto">${headOptions().map(([v, t]) => `<option value="${esc(v)}"${v === p.ph ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></div>`).join('') : '')
+      + money$('Payment made', 'paid', 0) + dateF('Date paid', 'pdate', today())
+      + sel('Paid from', 'phead', headOptions(), (lastPlan.all.find(x => today() >= x.date && today() < x.end) || h).date),
+    onSubmit: fd => {
+      const due = parseMoney(fd.get('due')), add = parseMoney(fd.get('paid'));
+      if (due < 0) return 'Enter the amount due.';
+      const keep = ((DB.occ[l.key] || {}).partials || []).map((p, i) => ({ ...p, head: fd.get('ph' + i) || p.head })).filter((p, i) => fd.get('rm' + i) !== 'on');
+      if (add > 0) keep.push({ date: fd.get('pdate'), amount: add, head: fd.get('phead') });
+      setOcc(l.key, { amount: due, confirmed: true, partials: keep });
+      if (l.it.mode === 'ask') l.it.lastAmount = due;
+      commit();
+    }
+  });
+}
 function lineForm(headDate, key) {
   const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
   if (l.kind === 'item' && l.untracked) {
     return modal({
       title: `${l.name} — ${fmtShort(l.due)}`,
       body: `<p class="help">Untracked${l.note ? ' (' + esc(l.note) + ')' : ''}: paid from an account that is not tracked here, so it is not deducted from this paycheck.</p>`
-        + money$(l.needsConfirm ? 'Amount this time (confirm)' : 'Amount', 'amount', l.base)
+        + money$(l.needsConfirm ? 'Amount this time (confirm)' : 'Amount', 'amount', l.baseDue)
         + chk('Skip this time (not charged / cancelled)', 'skip', l.skip),
       onSubmit: fd => {
         const amount = parseMoney(fd.get('amount')); if (amount < 0) return 'Enter an amount.';
@@ -541,7 +581,8 @@ function lineForm(headDate, key) {
     const natural = (lastPlan.all.find(x => l.due >= x.date && l.due < x.end) || h).date;
     return modal({
       title: `${l.name} — due ${fmtShort(l.due)}`,
-      body: money$(l.needsConfirm ? 'Amount this time (confirm)' : (l.charges.length ? 'Payment amount (before charges)' : 'Amount'), 'amount', l.base)
+      body: (l.paidSoFar ? `<p class="help">${partText(l)}. Use <b>Payments</b> on the line to add or remove payments.</p>` : '')
+        + money$(l.needsConfirm ? 'Amount this time (confirm)' : (l.charges.length ? 'Payment amount (before charges)' : 'Amount due'), 'amount', l.baseDue)
         + (l.charges.length ? `<p class="help">Charged to this account since the last payment. These are added to the amount above, so this payment totals <b>${money(l.amount)}</b>:</p>` + l.charges.map((c, n) => money$(`${esc(c.it.name)} · ${fmtShort(c.date)}${c.needsConfirm ? ' (confirm)' : ''}`, 'c' + n, c.amount)).join('') : '')
         + chk('Paid', 'paid', l.paid) + chk('Cleared (shows in the bank)', 'cleared', l.cleared)
         + sel('Pay this from', 'moveTo', headOptions(), h.date)
@@ -579,25 +620,42 @@ function addLineForm(headDate, presetAmount = 0) {
   const debts = DB.items.filter(i => i.category === 'Debt payment' && i.active !== false);
   return modal({
     title: 'Add to this paycheck',
-    body: sel('What is it?', 'kind', [['debt', 'Extra payment on a debt'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
+    body: sel('What is it?', 'kind', [['debt', 'Payment toward a debt (partial or extra)'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
       + sel('Which debt', 'itemId', [['', '— other —'], ...debts.map(d => [d.id, d.name])], '', 'data-showif="kind=debt"')
       + fld('Name', 'name', '', '', 'data-showif="kind=debt|transfer|bill"')
       + fld('Goes to (e.g. Ally Savings)', 'dest', '', '', 'data-showif="kind=transfer"')
       + sel('Fund', 'fundId', DB.funds.map(f => [f.id, `${f.name} (${money(fundBalance(f.id))})`]), '', 'data-showif="kind=fundin|fundout"')
       + money$('Amount', 'amount', presetAmount) + dateF('Date', 'date', headDate >= today() ? headDate : today()) + fld('Note (optional)', 'note', '', '', 'data-showif="kind=fundin|fundout"')
       + sel('Pay this from', 'headDate', headOptions(), headDate),
-    after: form => form.elements.itemId.addEventListener('change', () => {
-      const it = byId(DB.items, form.elements.itemId.value); if (it) form.elements.name.value = 'Extra: ' + it.name;
-    }),
+    after: form => {
+      // The date decides which paycheck the money comes out of (you can still change "Pay this from" afterwards).
+      const sync = () => { const d = form.elements.date.value, hh = lastPlan.all.find(x => d >= x.date && d < x.end); if (hh) form.elements.headDate.value = hh.date; };
+      const apply = () => {
+        if (form.elements.kind.value === 'debt') { form.elements.date.value = today(); sync(); }
+        else { form.elements.date.value = headDate >= today() ? headDate : today(); form.elements.headDate.value = headDate; }
+      };
+      form.elements.kind.addEventListener('change', apply);
+      form.elements.date.addEventListener('change', sync);
+      if (form.elements.kind.value === 'debt') apply();
+      form.elements.itemId.addEventListener('change', () => {
+        const it = byId(DB.items, form.elements.itemId.value); if (it) form.elements.name.value = it.name;
+      });
+    },
     onSubmit: fd => {
       const amount = parseMoney(fd.get('amount')), kind = fd.get('kind'); if (amount <= 0) return 'Enter an amount.';
       if (kind === 'fundin' || kind === 'fundout') {
         const fid = fd.get('fundId'); if (!fid) return 'Add a sinking fund first (Sinking funds page).';
         if (kind === 'fundout' && amount > fundBalance(fid)) return 'That is more than the fund holds.';
         DB.fundMoves.push({ id: uid(), fundId: fid, headDate: fd.get('headDate'), date: fd.get('date'), amount: kind === 'fundout' ? -amount : amount, note: fd.get('note').trim() });
+      } else if (kind === 'debt' && fd.get('itemId')) {
+        // Nest it under that debt's due date: the one in this paycheck if it has one, else its next due date.
+        const it = byId(DB.items, fd.get('itemId')), date = fd.get('date');
+        const here = lastPlan.all.find(x => x.date === headDate), line = here && here.lines.find(l => l.kind === 'item' && l.it.id === it.id && !l.untracked);
+        const nextDue = occurrences(it, date, addDays(date, 400))[0], key = line ? line.key : (nextDue ? it.id + ':' + nextDue : null);
+        if (!key) return 'That debt has no upcoming due date.';
+        setOcc(key, { partials: [...((DB.occ[key] || {}).partials || []), { date, amount, head: fd.get('headDate') }] });
       } else {
         let name = fd.get('name').trim(); if (!name) return 'Give it a name.';
-        if (kind === 'debt' && fd.get('itemId') && !/^extra/i.test(name)) name = 'Extra: ' + name;
         DB.extras.push({ id: uid(), headDate: fd.get('headDate'), date: fd.get('date'), name, category: kind === 'debt' ? 'Debt payment' : kind === 'transfer' ? 'Transfer' : 'Bill', dest: kind === 'transfer' ? fd.get('dest').trim() : '', amount, paid: false, cleared: false });
       }
       commit();
@@ -724,18 +782,29 @@ function rowHtml(h, r) {
   if (r.kind === 'fund') {
     return `<tr class="${r.t === 0 ? 'inc' : ''}"><td class="small">${d}</td><td>${esc(r.name)}${r.m.note ? `<div class="muted small">${esc(r.m.note)}</div>` : ''}</td><td class="num ${r.t === 0 ? 'pos' : ''}">${r.t === 0 ? '+' : '−'}${money(r.amount)}</td><td class="num">${money(r.run)}</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link danger" data-act="del-move" data-id="${r.m.id}">✕</button></td></tr>`;
   }
+  if (r.kind === 'partial' && r.here) {
+    return `<tr class="sub"><td class="small">${d}</td><td class="name">↳ Payment <span class="chip ok">paid</span></td>
+    <td class="num">−${money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${money(r.run)}</td><td class="chk"><input type="checkbox" checked disabled></td><td class="chk"></td>
+    <td class="num"><button class="link" data-act="part-pay" data-head="${r.parentHead}" data-key="${esc(r.parentKey)}">Edit</button></td></tr>`;
+  }
+  if (r.kind === 'partial') {
+    return `<tr class="done"><td class="small">${d}</td><td class="name">${esc(r.name)} <span class="chip ok">paid</span></td>
+    <td class="num">−${money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${money(r.run)}</td><td class="chk"><input type="checkbox" checked disabled></td><td class="chk"></td>
+    <td class="num"><button class="link" data-act="part-pay" data-head="${r.parentHead}" data-key="${esc(r.parentKey)}">Edit</button></td></tr>`;
+  }
   if (r.untracked) {
     return `<tr class="untracked${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
     <td class="name">${esc(r.name)} <span class="chip proj">untracked</span>${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.note ? ' · paid from ' + esc(r.note) : ' · paid from another account'}</div></td>
     <td class="num" title="Not deducted from this paycheck">${r.skip ? '—' : money(r.base)}</td><td class="num muted">—</td><td class="chk"></td><td class="chk"></td>
     <td class="num"><button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
   }
+  const nestedInfo = (r.partials || []).filter(p => !p.here).map(p => `<tr class="sub info"><td class="small">${fmtShort(p.date)}</td><td class="name">↳ Payment, paid from the ${fmtShort(p.ph)} paycheck</td><td class="num muted" title="Deducted on the ${fmtShort(p.ph)} paycheck">${money(p.amount)}</td><td class="num muted">—</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link" data-act="part-pay" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`).join('');
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
-    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>
-    <td class="num"><button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
+    <td class="num">${r.category === 'Debt payment' && r.kind === 'item' ? `<button class="link" data-act="part-pay" data-head="${h.date}" data-key="${esc(r.key)}">Payments</button>` : ''}<button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>${nestedInfo}`;
 }
 
 // Plain-text summary of one paycheck, for copying or saving.
@@ -752,6 +821,8 @@ function reportText(h) {
   if (!payments.length) L.push('- Nothing due in this period.');
   for (const r of payments) {
     L.push(`- ${fmtShort(r.date)}: ${r.name} (${r.category}) -${money(r.amount)}, left ${neg(r.run)}${r.paid ? ' [paid]' : ''}${r.needsConfirm ? ' [amount needs confirming]' : ''}`);
+    if (r.paidSoFar) L.push('    ' + partText(r));
+    for (const p of (r.partials || [])) if (!p.here) L.push(`    paid ${money(p.amount)} on ${fmtShort(p.date)}, from the ${fmtShort(p.ph)} paycheck`);
     if (r.charges && r.charges.length) L.push(`    includes ${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + '));
   }
   const untracked = h.rows.filter(r => r.untracked && !r.skip);
@@ -786,7 +857,7 @@ function checkCard(h, plan) {
   const isNext = h.date === plan.next, t = today();
   const cur = h.date <= t && t < h.end;
   const badge = isNext ? '<span class="badge next">Next paycheck</span>' : (plan.inProgress === h ? '<span class="badge">Still in progress</span>' : cur ? '<span class="badge">Current period</span>' : '');
-  const n = h.rows.filter(r => r.t === 1 && !r.skip && !r.untracked).length, u = h.rows.filter(r => r.untracked && !r.skip).length;
+  const n = h.rows.filter(r => r.t === 1 && !r.skip && !r.untracked && r.kind !== 'partial').length, u = h.rows.filter(r => r.untracked && !r.skip).length;
   return `<div class="card check${isNext ? ' next' : ''}" id="chk-${h.date}">
     <div class="head"><div><h2>${fmtShort(h.date)} paycheck ${badge}</h2><span class="muted small">Pays for ${fmtDate(h.date)} – ${fmtDate(addDays(h.end, -1))} · ${n} payment${n === 1 ? '' : 's'}${u ? ` · ${u} untracked` : ''}</span></div>
       <div class="leftbox"><div class="muted small">Left to play with</div><div class="big2 ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div></div></div>
@@ -881,7 +952,7 @@ function buildXlsx() {
   for (const h of plan.heads) for (const r of h.rows) {
     planRows.push([h.date, r.date, r.name, r.category || (r.t === 0 ? 'Income' : ''), r.dest || '', r.skip || r.untracked ? 0 : d(r.t === 0 ? r.amount : -r.amount), r.skip || r.untracked ? '' : d(r.run),
       r.untracked ? 'Untracked' : r.t === 1 ? (r.paid ? 'Y' : 'N') : (r.kind === 'pay' ? (r.pay.landed ? 'Landed' : 'Expected') : ''), r.t === 1 && r.kind !== 'fund' && !r.untracked ? (r.cleared ? 'Y' : 'N') : '',
-      r.untracked ? `${money(r.base)} paid from ${r.note || 'another account'} (not deducted)` : r.charges && r.charges.length ? `${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + ') : '']);
+      r.untracked ? `${money(r.base)} paid from ${r.note || 'another account'} (not deducted)` : [partText(r), r.charges && r.charges.length ? `${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + ') : ''].filter(Boolean).join('; ')]);
   }
   planRows.push([], ['Left to play with by paycheck']);
   for (const h of plan.heads) planRows.push([h.date, '', 'Income ' + d(h.income) + ' · Out ' + d(h.out), '', '', d(h.left)]);
@@ -919,6 +990,7 @@ const A = {
   'pw-change': () => passwordForm('Change password'),
   'pw-remove': () => { if (confirm('Remove the password? The data file will be stored unencrypted.')) { ENC = null; commit(); } },
   month: ({ d }) => { state.month = monthShift(planMonth(), +d); render(); },
+  'part-pay': ({ head, key }) => partForm(head, key),
   report: ({ head }) => openReport(head),
   'report-next': () => openReport(nextPayDate()),
   'report-copy': async () => {
