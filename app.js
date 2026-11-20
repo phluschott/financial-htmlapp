@@ -29,7 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
-const VERSION = '1.0.3';
+const VERSION = '2.0.0';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -769,7 +769,7 @@ function viewOnboard() {
     body = `<div class="card"><h2>Welcome</h2>
       <p class="banner" style="display:block"><b>Please note:</b> this is only a visual aid for seeing where your money is going and when. It is <b>not financial advice</b>.</p>
       <p>This app answers one question: <b>“I have a paycheck coming — what do I need to pay out of it, and what is left?”</b> Each paycheck gets its own card listing the payments due until the next paycheck, in date order.</p>
-      <p class="help">Setup takes a few minutes: your income, the things that pull money on a schedule, and any sinking funds. No account balances are tracked.</p>
+      <p class="help">Setup takes a few minutes: your income, the things that pull money on a schedule, and any sinking funds. The app does not connect to your accounts; the only balances it holds are the ones you type in on the Balances page.</p>
       <h3>Protect your data (optional)</h3>
       <p class="help">A password encrypts the data file. If you skip it, the file is plain text. You can change this any time in Settings. There is no password recovery.</p>
       ${ENC ? '<p class="pos">Password set ✓</p>' : '<label class="field"><span>Password (8+ characters, optional)</span><input type="password" id="ob-pw"></label><label class="field"><span>Repeat password</span><input type="password" id="ob-pw2"></label>'}
