@@ -147,7 +147,12 @@ function buildPlan(mk) {
       const unt = isUntracked(it, due);
       const h = o.moveTo && !unt ? H.find(x => x.date === o.moveTo) : at(due);
       if (!h) continue;
-      const base = o.amount !== undefined ? o.amount : itemAmount(it);
+      const baseDue = o.amount !== undefined ? o.amount : itemAmount(it);
+      // Partial payments apply to this due date only: they reduce what is still to pay, and each appears on
+      // the paycheck whose period it was paid in.
+      const partials = (o.partials || []).map((p, i) => ({ ...p, i }));
+      const paidSoFar = sum(partials, p => p.amount);
+      const base = Math.max(baseDue - paidSoFar, 0);
       const charges = [];
       if (it.category === 'Debt payment') {
         const prev = history[history.indexOf(due) - 1] || addDays(due, -31);
@@ -163,10 +168,17 @@ function buildPlan(mk) {
       }
       h.lines.push({
         kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
-        base, charges, amount: base + sum(charges, c => c.amount), paid: !!o.paid, cleared: !!o.cleared, skip: !!o.skip,
+        base, baseDue, partials, paidSoFar, charges, amount: base + sum(charges, c => c.amount),
+        paid: !!o.paid || (paidSoFar > 0 && base === 0 && !charges.length), cleared: !!o.cleared, skip: !!o.skip,
         untracked: unt, note: unt ? (it.untrackedNote || '') : '',
         needsConfirm: (it.mode === 'ask' && !o.confirmed) || charges.some(c => c.needsConfirm)
       });
+      for (const p of partials) {
+        (at(p.date) || h).lines.push({
+          kind: 'partial', key: key + '#' + p.i, parentKey: key, parentHead: h.date, parentDue: due,
+          name: it.name + ' (partial payment)', category: it.category, due: p.date, amount: p.amount, paid: true, cleared: false, skip: false
+        });
+      }
     }
   }
   for (const x of DB.extras) { const h = H.find(h => h.date === x.headDate); if (h) h.lines.push({ kind: 'extra', key: x.id, x, due: x.date, name: x.name, category: x.category, dest: x.dest, amount: x.amount, paid: x.paid, cleared: x.cleared, skip: false }); }
@@ -521,13 +533,35 @@ function extraIncomeForm(headDate, id) {
     }
   });
 }
+const partText = r => r.paidSoFar ? `${money(r.baseDue)} due, ${money(r.paidSoFar)} paid, ${money(r.base)} to go` : '';
+function partForm(headDate, key) {
+  const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
+  return modal({
+    title: `Partial payment: ${l.name}`,
+    body: `<p class="help">Due ${fmtShort(l.due)}. A partial payment applies to this due date only; the next due date goes back to the usual amount. It shows on the paycheck it was paid from, and the rest stays on this one.</p>`
+      + money$('Amount due this time (change it if the real balance is different)', 'due', l.baseDue)
+      + (l.partials.length ? '<p class="help" style="margin-bottom:4px">Already paid toward this due date (tick to remove):</p>' + l.partials.map(p => chk(`${fmtShort(p.date)}: ${money(p.amount)}`, 'rm' + p.i, false)).join('') : '')
+      + money$('Partial payment made', 'paid', 0) + dateF('Date paid', 'pdate', today()),
+    onSubmit: fd => {
+      const due = parseMoney(fd.get('due')), add = parseMoney(fd.get('paid'));
+      if (due < 0) return 'Enter the amount due.';
+      const keep = ((DB.occ[l.key] || {}).partials || []).filter((p, i) => fd.get('rm' + i) !== 'on');
+      if (add > 0) keep.push({ date: fd.get('pdate'), amount: add });
+      const total = sum(keep, p => p.amount);
+      if (total > due) return `Payments (${money(total)}) are more than the amount due (${money(due)}).`;
+      setOcc(l.key, { amount: due, confirmed: true, partials: keep });
+      if (l.it.mode === 'ask') l.it.lastAmount = due;
+      commit();
+    }
+  });
+}
 function lineForm(headDate, key) {
   const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
   if (l.kind === 'item' && l.untracked) {
     return modal({
       title: `${l.name} — ${fmtShort(l.due)}`,
       body: `<p class="help">Untracked${l.note ? ' (' + esc(l.note) + ')' : ''}: paid from an account that is not tracked here, so it is not deducted from this paycheck.</p>`
-        + money$(l.needsConfirm ? 'Amount this time (confirm)' : 'Amount', 'amount', l.base)
+        + money$(l.needsConfirm ? 'Amount this time (confirm)' : 'Amount', 'amount', l.baseDue)
         + chk('Skip this time (not charged / cancelled)', 'skip', l.skip),
       onSubmit: fd => {
         const amount = parseMoney(fd.get('amount')); if (amount < 0) return 'Enter an amount.';
@@ -541,7 +575,8 @@ function lineForm(headDate, key) {
     const natural = (lastPlan.all.find(x => l.due >= x.date && l.due < x.end) || h).date;
     return modal({
       title: `${l.name} — due ${fmtShort(l.due)}`,
-      body: money$(l.needsConfirm ? 'Amount this time (confirm)' : (l.charges.length ? 'Payment amount (before charges)' : 'Amount'), 'amount', l.base)
+      body: (l.paidSoFar ? `<p class="help">${partText(l)}. Use <b>Part-pay</b> on the line to add or remove partial payments.</p>` : '')
+        + money$(l.needsConfirm ? 'Amount this time (confirm)' : (l.charges.length ? 'Payment amount (before charges)' : 'Amount due'), 'amount', l.baseDue)
         + (l.charges.length ? `<p class="help">Charged to this account since the last payment. These are added to the amount above, so this payment totals <b>${money(l.amount)}</b>:</p>` + l.charges.map((c, n) => money$(`${esc(c.it.name)} · ${fmtShort(c.date)}${c.needsConfirm ? ' (confirm)' : ''}`, 'c' + n, c.amount)).join('') : '')
         + chk('Paid', 'paid', l.paid) + chk('Cleared (shows in the bank)', 'cleared', l.cleared)
         + sel('Pay this from', 'moveTo', headOptions(), h.date)
@@ -724,6 +759,11 @@ function rowHtml(h, r) {
   if (r.kind === 'fund') {
     return `<tr class="${r.t === 0 ? 'inc' : ''}"><td class="small">${d}</td><td>${esc(r.name)}${r.m.note ? `<div class="muted small">${esc(r.m.note)}</div>` : ''}</td><td class="num ${r.t === 0 ? 'pos' : ''}">${r.t === 0 ? '+' : '−'}${money(r.amount)}</td><td class="num">${money(r.run)}</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link danger" data-act="del-move" data-id="${r.m.id}">✕</button></td></tr>`;
   }
+  if (r.kind === 'partial') {
+    return `<tr class="done"><td class="small">${d}</td><td class="name">${esc(r.name)} <span class="chip ok">paid</span><div class="muted small">toward the ${fmtShort(r.parentDue)} payment</div></td>
+    <td class="num">−${money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${money(r.run)}</td><td class="chk"><input type="checkbox" checked disabled></td><td class="chk"></td>
+    <td class="num"><button class="link" data-act="part-pay" data-head="${r.parentHead}" data-key="${esc(r.parentKey)}">Edit</button></td></tr>`;
+  }
   if (r.untracked) {
     return `<tr class="untracked${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
     <td class="name">${esc(r.name)} <span class="chip proj">untracked</span>${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.note ? ' · paid from ' + esc(r.note) : ' · paid from another account'}</div></td>
@@ -731,11 +771,11 @@ function rowHtml(h, r) {
     <td class="num"><button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
   }
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
-    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>
-    <td class="num"><button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
+    <td class="num">${r.category === 'Debt payment' && r.kind === 'item' ? `<button class="link" data-act="part-pay" data-head="${h.date}" data-key="${esc(r.key)}">Part-pay</button>` : ''}<button class="link" data-act="edit-line" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`;
 }
 
 // Plain-text summary of one paycheck, for copying or saving.
@@ -752,6 +792,7 @@ function reportText(h) {
   if (!payments.length) L.push('- Nothing due in this period.');
   for (const r of payments) {
     L.push(`- ${fmtShort(r.date)}: ${r.name} (${r.category}) -${money(r.amount)}, left ${neg(r.run)}${r.paid ? ' [paid]' : ''}${r.needsConfirm ? ' [amount needs confirming]' : ''}`);
+    if (r.paidSoFar) L.push('    ' + partText(r));
     if (r.charges && r.charges.length) L.push(`    includes ${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + '));
   }
   const untracked = h.rows.filter(r => r.untracked && !r.skip);
@@ -881,7 +922,7 @@ function buildXlsx() {
   for (const h of plan.heads) for (const r of h.rows) {
     planRows.push([h.date, r.date, r.name, r.category || (r.t === 0 ? 'Income' : ''), r.dest || '', r.skip || r.untracked ? 0 : d(r.t === 0 ? r.amount : -r.amount), r.skip || r.untracked ? '' : d(r.run),
       r.untracked ? 'Untracked' : r.t === 1 ? (r.paid ? 'Y' : 'N') : (r.kind === 'pay' ? (r.pay.landed ? 'Landed' : 'Expected') : ''), r.t === 1 && r.kind !== 'fund' && !r.untracked ? (r.cleared ? 'Y' : 'N') : '',
-      r.untracked ? `${money(r.base)} paid from ${r.note || 'another account'} (not deducted)` : r.charges && r.charges.length ? `${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + ') : '']);
+      r.untracked ? `${money(r.base)} paid from ${r.note || 'another account'} (not deducted)` : [partText(r), r.charges && r.charges.length ? `${money(r.base)} payment + ` + r.charges.map(c => `${money(c.amount)} ${c.it.name}`).join(' + ') : ''].filter(Boolean).join('; ')]);
   }
   planRows.push([], ['Left to play with by paycheck']);
   for (const h of plan.heads) planRows.push([h.date, '', 'Income ' + d(h.income) + ' · Out ' + d(h.out), '', '', d(h.left)]);
@@ -919,6 +960,7 @@ const A = {
   'pw-change': () => passwordForm('Change password'),
   'pw-remove': () => { if (confirm('Remove the password? The data file will be stored unencrypted.')) { ENC = null; commit(); } },
   month: ({ d }) => { state.month = monthShift(planMonth(), +d); render(); },
+  'part-pay': ({ head, key }) => partForm(head, key),
   report: ({ head }) => openReport(head),
   'report-next': () => openReport(nextPayDate()),
   'report-copy': async () => {
