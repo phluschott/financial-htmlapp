@@ -547,13 +547,13 @@ function partForm(headDate, key) {
     title: `Payments: ${l.name}`,
     body: `<p class="help">Due ${fmtShort(l.due)}. A payment applies to this due date only; the next due date goes back to the usual amount. The payment is listed under this debt, and its amount comes out of the paycheck you pick below.</p>`
       + money$('Amount due this time (change it if the real balance is different)', 'due', l.baseDue)
-      + (l.partials.length ? '<p class="help" style="margin-bottom:4px">Already paid toward this due date (tick to remove):</p>' + l.partials.map(p => chk(`${fmtShort(p.date)}: ${money(p.amount)}`, 'rm' + p.i, false)).join('') : '')
+      + (l.partials.length ? '<p class="help" style="margin-bottom:4px">Already paid toward this due date. Change which paycheck it came out of, or tick to remove:</p>' + l.partials.map(p => `<div style="display:flex;gap:10px;align-items:center;margin-bottom:8px"><label class="check" style="margin:0;flex:1"><input type="checkbox" name="rm${p.i}"> ${fmtShort(p.date)}: ${money(p.amount)}</label><select name="ph${p.i}" style="width:auto">${headOptions().map(([v, t]) => `<option value="${esc(v)}"${v === p.ph ? ' selected' : ''}>${esc(t)}</option>`).join('')}</select></div>`).join('') : '')
       + money$('Payment made', 'paid', 0) + dateF('Date paid', 'pdate', today())
       + sel('Paid from', 'phead', headOptions(), (lastPlan.all.find(x => today() >= x.date && today() < x.end) || h).date),
     onSubmit: fd => {
       const due = parseMoney(fd.get('due')), add = parseMoney(fd.get('paid'));
       if (due < 0) return 'Enter the amount due.';
-      const keep = ((DB.occ[l.key] || {}).partials || []).filter((p, i) => fd.get('rm' + i) !== 'on');
+      const keep = ((DB.occ[l.key] || {}).partials || []).map((p, i) => ({ ...p, head: fd.get('ph' + i) || p.head })).filter((p, i) => fd.get('rm' + i) !== 'on');
       if (add > 0) keep.push({ date: fd.get('pdate'), amount: add, head: fd.get('phead') });
       setOcc(l.key, { amount: due, confirmed: true, partials: keep });
       if (l.it.mode === 'ask') l.it.lastAmount = due;
@@ -627,9 +627,20 @@ function addLineForm(headDate, presetAmount = 0) {
       + sel('Fund', 'fundId', DB.funds.map(f => [f.id, `${f.name} (${money(fundBalance(f.id))})`]), '', 'data-showif="kind=fundin|fundout"')
       + money$('Amount', 'amount', presetAmount) + dateF('Date', 'date', headDate >= today() ? headDate : today()) + fld('Note (optional)', 'note', '', '', 'data-showif="kind=fundin|fundout"')
       + sel('Pay this from', 'headDate', headOptions(), headDate),
-    after: form => form.elements.itemId.addEventListener('change', () => {
-      const it = byId(DB.items, form.elements.itemId.value); if (it) form.elements.name.value = it.name;
-    }),
+    after: form => {
+      // The date decides which paycheck the money comes out of (you can still change "Pay this from" afterwards).
+      const sync = () => { const d = form.elements.date.value, hh = lastPlan.all.find(x => d >= x.date && d < x.end); if (hh) form.elements.headDate.value = hh.date; };
+      const apply = () => {
+        if (form.elements.kind.value === 'debt') { form.elements.date.value = today(); sync(); }
+        else { form.elements.date.value = headDate >= today() ? headDate : today(); form.elements.headDate.value = headDate; }
+      };
+      form.elements.kind.addEventListener('change', apply);
+      form.elements.date.addEventListener('change', sync);
+      if (form.elements.kind.value === 'debt') apply();
+      form.elements.itemId.addEventListener('change', () => {
+        const it = byId(DB.items, form.elements.itemId.value); if (it) form.elements.name.value = it.name;
+      });
+    },
     onSubmit: fd => {
       const amount = parseMoney(fd.get('amount')), kind = fd.get('kind'); if (amount <= 0) return 'Enter an amount.';
       if (kind === 'fundin' || kind === 'fundout') {
