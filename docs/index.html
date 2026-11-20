@@ -51,8 +51,8 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
     <div><b>1 &middot; It is only a visual aid.</b> It shows you where your money is going and when. That is all it is designed to do. It does not tell you what to do with your money.</div>
     <div><b>2 &middot; It is not financial advice.</b> Nothing in this app or on this website is financial, tax, legal, or investment advice. The numbers are only the figures you type in.</div>
   </div>
-  <p><a class="btn" href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/visual-paycheck-planner-1.0.3.zip" rel="noopener">Download v1.0.3 (.zip, 94 KB)</a></p>
-  <p class="meta">Hosted on GitHub. Free. Works offline. No account, no tracking. <a href="#verify">Verify the download</a> · SHA-256 <code>483de015af421fec2016eadd248668a005b8080d64081e30fa7d600dd22de981</code></p>
+  <p><a class="btn" href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/visual-paycheck-planner-2.0.0.zip" rel="noopener">Download v2.0.0 (.zip, 106 KB)</a></p>
+  <p class="meta">Hosted on GitHub. Free. Works offline. No account, no tracking. <a href="#verify">Verify the download</a> · SHA-256 <code>d98939ce2371c980800031edf382a649fcabdc4a00facc6b8e5ebe9bd099fe89</code></p>
   <img class="shot" src="assets/screenshot.png" alt="A paycheck card listing the income and ten payments in date order, with a running balance after each and $347.53 left to play with" width="948" height="785">
 </header>
 
@@ -77,11 +77,11 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
   <div class="card"><h3>No network access</h3><p>The page ships with a Content-Security-Policy that blocks every network request, and the code is plain, readable JavaScript.</p></div>
   <div class="card"><h3>Optional encryption</h3><p>Set a password and your data file is encrypted with AES-256-GCM using your browser’s built-in crypto. There is no recovery if you forget it.</p></div>
 </div>
-<p style="margin-top:14px"><b>Not a bank dashboard.</b> It does not connect to your accounts and does not track balances. You tell it your income schedule and your bills; it lays them out so you can see them.</p>
+<p style="margin-top:14px"><b>Not a bank dashboard.</b> It does not connect to your accounts. The only balances it holds are the ones you type in. You tell it your income schedule and your bills; it lays them out so you can see them.</p>
 
 <h2>Get started</h2>
 <ol class="steps">
-  <li><a href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/visual-paycheck-planner-1.0.3.zip" rel="noopener">Download the zip</a> and <a href="#verify">verify the hash</a> (optional but recommended).</li>
+  <li><a href="https://github.com/phluschott/financial-htmlapp/raw/main/docs/downloads/visual-paycheck-planner-2.0.0.zip" rel="noopener">Download the zip</a> and <a href="#verify">verify the hash</a> (optional but recommended).</li>
   <li>Unzip it into a folder you will keep, such as Documents.</li>
   <li>Open <code>index.html</code> in your browser (double-click it) and follow the short setup.</li>
   <li>In Chrome or Edge, choose that same folder when asked, and your data autosaves there with backups. In other browsers, use <b>Save file</b> and <b>Open a data file</b>.</li>
@@ -95,14 +95,14 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
 
 <h2 id="verify">Verify your download</h2>
 <p>Compare the SHA-256 fingerprint of the file you downloaded with this one. If they match, the file is exactly what was published.</p>
-<p><b>visual-paycheck-planner-1.0.3.zip</b></p>
-<code class="hash">483de015af421fec2016eadd248668a005b8080d64081e30fa7d600dd22de981</code>
+<p><b>visual-paycheck-planner-2.0.0.zip</b></p>
+<code class="hash">d98939ce2371c980800031edf382a649fcabdc4a00facc6b8e5ebe9bd099fe89</code>
 <h3>Windows (PowerShell)</h3>
-<pre>Get-FileHash .\visual-paycheck-planner-1.0.3.zip -Algorithm SHA256</pre>
+<pre>Get-FileHash .\visual-paycheck-planner-2.0.0.zip -Algorithm SHA256</pre>
 <h3>macOS</h3>
-<pre>shasum -a 256 visual-paycheck-planner-1.0.3.zip</pre>
+<pre>shasum -a 256 visual-paycheck-planner-2.0.0.zip</pre>
 <h3>Linux</h3>
-<pre>sha256sum visual-paycheck-planner-1.0.3.zip</pre>
+<pre>sha256sum visual-paycheck-planner-2.0.0.zip</pre>
 <p>Or download <a href="https://github.com/phluschott/financial-htmlapp/blob/main/docs/downloads/SHA256SUMS" rel="noopener">SHA256SUMS</a> (use the Raw button) into the same folder and run <code>sha256sum -c SHA256SUMS</code> (Linux) or <code>shasum -a 256 -c SHA256SUMS</code> (macOS).</p>
 <p class="note"><b>What this does and doesn’t prove.</b> A matching hash shows your download was not corrupted or altered on the way to you. It cannot, on its own, show that this website was not changed, since the hash is published here too. For stronger assurance, compare it with the copy in the project’s source repository, or rebuild the zip yourself: the build is reproducible, so <code>python3 build.py</code> on the source produces a zip with the same hash. You can also open the unzipped files in a text editor — there are only three small ones.</p>
 
@@ -116,7 +116,7 @@ footer { margin-top: 56px; color: var(--muted); font-size: 14px; border-top: 1px
 </ul>
 
 <footer>
-  A visual aid, not financial advice. · Visual Paycheck Planner v1.0.3 · built 2026-11-20 · <a href="https://github.com/phluschott/financial-htmlapp/blob/main/docs/downloads/SHA256SUMS" rel="noopener">SHA256SUMS</a> · <a href="https://github.com/phluschott/financial-htmlapp" rel="noopener">Source code</a>
+  A visual aid, not financial advice. · Visual Paycheck Planner v2.0.0 · built 2026-11-20 · <a href="https://github.com/phluschott/financial-htmlapp/blob/main/docs/downloads/SHA256SUMS" rel="noopener">SHA256SUMS</a> · <a href="https://github.com/phluschott/financial-htmlapp" rel="noopener">Source code</a>
 </footer>
 </div>
 </body>
