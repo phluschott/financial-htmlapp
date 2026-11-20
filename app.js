@@ -500,14 +500,23 @@ function itemForm(id) {
 }
 function fundForm(id) {
   const f = id ? byId(DB.funds, id) : { name: '', purpose: '' };
+  const opening = id ? DB.fundMoves.find(m => m.fundId === id && m.opening) : null;
   return modal({
     title: id ? 'Edit sinking fund' : 'Add sinking fund',
-    body: fld('Name (e.g. New car)', 'name', f.name, 'required') + fld('What is it for?', 'purpose', f.purpose),
+    body: fld('Name (e.g. New car)', 'name', f.name, 'required') + fld('What is it for?', 'purpose', f.purpose)
+      + money$('Opening balance (what is already in this fund)', 'opening', opening ? opening.amount : 0)
+      + '<p class="help">Money you had saved before using this app. It sets the starting balance and does not come out of any paycheck. Leave blank for zero.</p>',
     onSubmit: fd => {
       if (!fd.get('name').trim()) return 'Name is required.';
+      const op = parseMoney(fd.get('opening'));
+      if (op < 0) return 'The opening balance cannot be negative.';
       const o = id ? f : { id: uid() };
       Object.assign(o, { name: fd.get('name').trim(), purpose: fd.get('purpose').trim() });
       if (!id) DB.funds.push(o);
+      // The opening balance is one fund move with no paycheck attached, so it adds to the balance without being deducted.
+      if (opening && op > 0) opening.amount = op;
+      else if (opening) DB.fundMoves = DB.fundMoves.filter(m => m !== opening);
+      else if (op > 0) DB.fundMoves.push({ id: uid(), fundId: o.id, headDate: '', date: today(), amount: op, note: 'Opening balance', opening: true });
       commit();
     }
   });
@@ -739,7 +748,7 @@ function chargedCell(i) {
   return d && d.category === 'Debt payment' ? `<b>${esc(d.name)}</b>` : '<span class="muted">Paycheck (directly)</span>';
 }
 function secItems() {
-  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}${i.apr ? ' · ' + i.apr + '% APR' : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td>${chargedCell(i)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
+  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}${i.apr ? ' · ' + i.apr + '% APR' : ''}${i.category === 'Debt payment' && !i.apr ? ' · <button class="link" data-act="edit-item" data-id="' + i.id + '">add APR</button>' : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td>${chargedCell(i)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
   return `<div class="card"><div class="head"><h2>Bills, subscriptions &amp; debts</h2><button class="primary" data-act="add-item">+ Add item</button></div>
     <p class="help">Everything that pulls money on a schedule: subscriptions, bills, credit card minimums, mortgage, and regular transfers to savings. Each lands on the paycheck that comes before its due date. If a bill is charged to a credit card, set <b>Charged to</b> and it is added to that card's payment instead of being paid separately.</p>
     <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th>Charged to</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted">Nothing added yet.</td></tr>'}</tbody></table></div></div>`;
