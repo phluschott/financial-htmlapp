@@ -18,6 +18,7 @@ It is built for the "what does the next two weeks look like?" problem: bills pul
 - **Whole-month view.** A month with two paychecks is two cards. Your next paycheck is highlighted, and income that has landed is kept separate from income you are only expecting.
 - **Charged to a card.** Mark a subscription or bill as charged to a credit card or loan you track. It is added to that card's payment instead of being paid twice.
 - **Untracked items.** Mark a bill or subscription as paid from an account you do not track here. It still shows up (and counts in your subscriptions total) but is never deducted from your paycheck.
+- **Partial and extra payments.** Record a payment toward a debt's due date. It nests under the debt like a ledger, the line shows what is still to pay, and the money comes out of the paycheck you paid it from.
 - **Next paycheck report.** One click gives a plain-text summary of any paycheck to copy or save, and a reminder appears the day before payday.
 - **Subscriptions at a glance.** A box on the month view totals what you spend on subscriptions in the calendar month.
 - **Sinking funds.** Named buckets (new car, house…) you add to when you choose and pull back from when you need to.
@@ -37,13 +38,13 @@ Compare the SHA-256 fingerprint of the file you downloaded with the one publishe
 
 | System | Command |
 |---|---|
-| Windows (PowerShell) | `Get-FileHash .\visual-paycheck-planner-1.0.2.zip -Algorithm SHA256` |
-| macOS | `shasum -a 256 visual-paycheck-planner-1.0.2.zip` |
-| Linux | `sha256sum visual-paycheck-planner-1.0.2.zip` |
+| Windows (PowerShell) | `Get-FileHash .\visual-paycheck-planner-1.0.3.zip -Algorithm SHA256` |
+| macOS | `shasum -a 256 visual-paycheck-planner-1.0.3.zip` |
+| Linux | `sha256sum visual-paycheck-planner-1.0.3.zip` |
 
-**v1.0.2:** `85cd645f6145f82440bfa6c681a3f5a928ab10827fa0c1bcdf3ead85ad47d1c8`
+**v1.0.3:** `483de015af421fec2016eadd248668a005b8080d64081e30fa7d600dd22de981`
 
-Older releases are listed in [`docs/downloads/SHA256SUMS`](docs/downloads/SHA256SUMS) (v1.0.1: `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`, v1.0.0: `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`).
+Older releases are listed in [`docs/downloads/SHA256SUMS`](docs/downloads/SHA256SUMS) (v1.0.2: `85cd645f6145f82440bfa6c681a3f5a928ab10827fa0c1bcdf3ead85ad47d1c8`, v1.0.1: `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`, v1.0.0: `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`).
 
 A matching hash shows the file was not corrupted or altered on the way to you. The build is reproducible: running `python3 build.py` on this source produces a zip with the same hash. The app is three small, readable files (`index.html`, `app.js`, `style.css`), so you can also read exactly what it does.
 
