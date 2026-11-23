@@ -619,14 +619,14 @@ function lineForm(headDate, key) {
   const x = l.x;
   return modal({
     title: 'Edit ' + x.name,
-    body: fld('Name', 'name', x.name, 'required') + sel('Category', 'category', CATS, x.category) + (x.category === 'Transfer' ? fld('Goes to', 'dest', x.dest || '') : '')
+    body: fld('Name', 'name', x.name, 'required') + (x.category === 'Adjustment' ? '' : sel('Category', 'category', CATS, x.category)) + (x.category === 'Transfer' ? fld('Goes to', 'dest', x.dest || '') : '')
       + money$('Amount', 'amount', x.amount) + dateF('Date', 'date', x.date) + sel('Pay this from', 'headDate', headOptions(), x.headDate)
       + chk('Paid', 'paid', x.paid) + chk('Cleared', 'cleared', x.cleared)
       + `<button type="button" class="link danger" data-act="del-extra" data-id="${x.id}">Delete this line</button>`,
     onSubmit: fd => {
       const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
       const cleared = fd.get('cleared') === 'on';
-      Object.assign(x, { name: fd.get('name').trim(), category: fd.get('category'), dest: fd.get('dest') ? fd.get('dest').trim() : x.dest, amount, date: fd.get('date'), headDate: fd.get('headDate'), paid: fd.get('paid') === 'on' || cleared, cleared });
+      Object.assign(x, { name: fd.get('name').trim(), category: x.category === 'Adjustment' ? 'Adjustment' : fd.get('category'), dest: fd.get('dest') ? fd.get('dest').trim() : x.dest, amount, date: fd.get('date'), headDate: fd.get('headDate'), paid: fd.get('paid') === 'on' || cleared, cleared });
       commit();
     }
   });
@@ -635,10 +635,12 @@ function addLineForm(headDate, presetAmount = 0) {
   const debts = DB.items.filter(i => i.category === 'Debt payment' && i.active !== false);
   return modal({
     title: 'Add to this paycheck',
-    body: sel('What is it?', 'kind', [['debt', 'Payment toward a debt (partial or extra)'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
+    body: sel('What is it?', 'kind', [['debt', 'Payment toward a debt (partial or extra)'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['adjust', 'Balance adjustment (spending or a correction)'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
       + sel('Which debt', 'itemId', [['', '— other —'], ...debts.map(d => [d.id, d.name])], '', 'data-showif="kind=debt"')
       + chk('This is extra, on top of the minimum', 'extra', false, 'data-showif="kind=debt"')
       + fld('Name', 'name', '', '', 'data-showif="kind=debt|transfer|bill"')
+      + fld('Note (optional, e.g. groceries)', 'adjname', '', '', 'data-showif="kind=adjust"')
+      + '<p class="help" data-showif="kind=adjust">Takes this amount off "Left to play with" for the paycheck, for spending or any correction. It is marked paid. To add money back, use + Extra income.</p>'
       + fld('Goes to (e.g. Ally Savings)', 'dest', '', '', 'data-showif="kind=transfer"')
       + sel('Fund', 'fundId', DB.funds.map(f => [f.id, `${f.name} (${money(fundBalance(f.id))})`]), '', 'data-showif="kind=fundin|fundout"')
       + money$('Amount', 'amount', presetAmount) + dateF('Date', 'date', headDate >= today() ? headDate : today()) + fld('Note (optional)', 'note', '', '', 'data-showif="kind=fundin|fundout"')
@@ -670,6 +672,9 @@ function addLineForm(headDate, presetAmount = 0) {
         const nextDue = occurrences(it, date, addDays(date, 400))[0], key = line ? line.key : (nextDue ? it.id + ':' + nextDue : null);
         if (!key) return 'That debt has no upcoming due date.';
         setOcc(key, { partials: [...((DB.occ[key] || {}).partials || []), { date, amount, head: fd.get('headDate'), extra: fd.get('extra') === 'on' }] });
+      } else if (kind === 'adjust') {
+        const note = fd.get('adjname').trim();
+        DB.extras.push({ id: uid(), headDate: fd.get('headDate'), date: fd.get('date'), name: note ? 'Balance adjustment: ' + note : 'Balance adjustment', category: 'Adjustment', dest: '', amount, paid: true, cleared: false });
       } else {
         let name = fd.get('name').trim(); if (!name) return 'Give it a name.';
         DB.extras.push({ id: uid(), headDate: fd.get('headDate'), date: fd.get('date'), name, category: kind === 'debt' ? 'Debt payment' : kind === 'transfer' ? 'Transfer' : 'Bill', dest: kind === 'transfer' ? fd.get('dest').trim() : '', amount, paid: false, cleared: false });
