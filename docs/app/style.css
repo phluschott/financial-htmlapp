@@ -144,3 +144,11 @@ footer{color:var(--muted);font-size:13px;text-align:center;padding:24px 16px}
   th,td{padding:7px 4px;font-size:14px}.btn{width:auto}
 }
 @media print{header,.notice,nav,.btn,.link{display:none}}
+
+/* "i" hovers */
+.tip{position:relative;display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;margin-left:6px;padding:0;border-radius:50%;border:1.5px solid var(--muted);background:none;color:var(--muted);font:italic 700 11px/1 Georgia,serif;cursor:help;vertical-align:middle;text-transform:none;letter-spacing:0}
+.tip::after{content:"";position:absolute;inset:-9px}
+.tip:hover,.tip:focus-visible{border-color:var(--accent);color:var(--accent)}
+#tipbox{position:fixed;inset:auto;margin:0;width:min(320px,calc(100vw - 16px));max-height:60vh;overflow:auto;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:12px;padding:10px 14px;box-shadow:0 10px 30px rgba(0,0,0,.25);font-size:14px;line-height:1.45;text-transform:none;letter-spacing:0;font-weight:400}
+#tipbox p{margin:4px 0}#tipbox b{color:var(--accent)}
+.lblrow{display:flex;align-items:center;margin-bottom:4px}.lblrow label{margin:0}

@@ -46,6 +46,7 @@ let toastTimer = null;
 function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastTimer); toastTimer = setTimeout(() => t.hidden = true, 3200); }
 const coach = html => `<div class="coach${DB.newToThis ? '' : ' off'}">${html}</div>`;
 const why = key => DB.newToThis && VW.WHY[key] ? `<details class="why"><summary>What is this?</summary><p>${esc(VW.WHY[key])}</p></details>` : '';
+const tip = k => VW.TIPS[k] ? `<button type="button" class="tip" data-tip="${k}" aria-label="What is this?">i</button>` : '';
 const chip = (txt, cls = '') => `<span class="chip ${cls}">${esc(txt)}</span>`;
 const groupChip = id => `<span class="chip"><i class="dot s-${id}" style="margin-right:5px"></i>${esc(VW.groupName(id))}</span>`;
 const dueIn = iso => { const n = U.daysUntil(iso); return n === 0 ? 'today' : n === 1 ? 'tomorrow' : n > 0 ? `in ${n} days` : `${-n} day${n === -1 ? '' : 's'} ago`; };
@@ -60,7 +61,7 @@ function fieldHtml(f, v) {
   else if (f.type === 'select') input = `<select id="${id}">${f.options.map(o => `<option value="${esc(o[0])}"${String(o[0]) === String(val) ? ' selected' : ''}>${esc(o[1])}</option>`).join('')}</select>`;
   else if (f.type === 'checkbox') return `<div class="f cb" data-field="${f.k}"${hide}><label><input id="${id}" type="checkbox"${val ? ' checked' : ''}>${esc(f.label)}</label>${f.hint ? `<div class="small muted">${esc(f.hint)}</div>` : ''}</div>`;
   else input = `<input id="${id}" type="text" value="${esc(val || '')}" autocomplete="off"${f.ph ? ` placeholder="${esc(f.ph)}"` : ''}>`;
-  return `<div class="f" data-field="${f.k}"${hide}><label for="${id}">${esc(f.label)}</label>${input}${f.hint ? `<div class="small muted">${esc(f.hint)}</div>` : ''}${f.why ? why(f.why) : ''}</div>`;
+  return `<div class="f" data-field="${f.k}"${hide}><div class="lblrow"><label for="${id}">${esc(f.label)}</label>${f.why ? tip(f.why) : ''}</div>${input}${f.hint ? `<div class="small muted">${esc(f.hint)}</div>` : ''}</div>`;
 }
 function readForm(fields) {
   const o = {};
@@ -107,8 +108,8 @@ function incomeForm(id) {
     title: x ? 'Edit pay' : 'Add pay', submit: x ? 'Save' : 'Add',
     values: x ? Object.assign({}, x) : { freq: 'biweekly', anchor: U.today(), active: true },
     fields: [
-      { k: 'name', label: 'Name (stays on this device)', type: 'text', req: true, ph: 'My paycheck' },
-      { k: 'aka', label: 'Name to use in reports (optional)', type: 'text', ph: 'Income A', hint: 'Your own label. If blank, the report uses a generic one like "Income A".' },
+      { k: 'name', label: 'Name (stays on this device)', type: 'text', req: true, ph: 'My paycheck', why: 'itemName' },
+      { k: 'aka', label: 'Name to use in reports (optional)', type: 'text', why: 'aka', ph: 'Income A', hint: 'Your own label. If blank, the report uses a generic one like "Income A".' },
       { k: 'amount', label: 'Take-home amount each time', type: 'money', req: true, why: 'pay' },
       { k: 'freq', label: 'How often are you paid?', type: 'select', options: incFreqs, why: 'payFreq' },
       { k: 'anchor', label: 'A payday (any one, past or next)', type: 'date', req: true, why: 'payDate' },
@@ -143,10 +144,10 @@ function billForm(kind, id, preset = {}) {
   openForm({
     title: (x ? 'Edit ' : 'Add a ') + ki.title, submit: x ? 'Save' : 'Add', values: vals,
     fields: [
-      { k: 'name', label: ki.nameLabel, type: 'text', req: true, ph: ki.ph },
-      { k: 'aka', label: 'Name to use in reports (optional)', type: 'text', ph: 'Card X', hint: 'Your own label. If blank, the report uses a generic one like "Debt 1".' },
+      { k: 'name', label: ki.nameLabel, type: 'text', req: true, ph: ki.ph, why: 'itemName' },
+      { k: 'aka', label: 'Name to use in reports (optional)', type: 'text', why: 'aka', ph: 'Card X', hint: 'Your own label. If blank, the report uses a generic one like "Debt 1".' },
       { k: 'amount', label: kind === 'debt' ? 'Payment each time' : 'Amount each time', type: 'money', req: true, why: kind === 'debt' ? 'debtMin' : 'billAmount' },
-      { k: 'freq', label: 'How often?', type: 'select', options: billFreqs },
+      { k: 'freq', label: 'How often?', type: 'select', options: billFreqs, why: 'billFreq' },
       { k: 'anchor', label: 'Next due date', type: 'date', req: true, why: 'billDate' },
       { k: 'day2', label: 'The other day each month (day number)', type: 'number', showIf: v => v.freq === 'semimonthly' },
       { k: 'group', label: 'Group', type: 'select', options: groupOpts, why: 'group' },
@@ -185,8 +186,8 @@ function goalForm(id) {
     title: x ? 'Edit goal' : 'Add a goal', submit: x ? 'Save' : 'Add',
     values: x ? Object.assign({}, x) : { active: true, saved: 0, contribution: 0 },
     fields: [
-      { k: 'name', label: 'Goal name (stays on this device)', type: 'text', req: true, ph: 'Car down payment' },
-      { k: 'aka', label: 'Name to use in reports (optional)', type: 'text', ph: 'Goal A', hint: 'Your own label. If blank, the report uses a generic one like "Goal A".' },
+      { k: 'name', label: 'Goal name (stays on this device)', type: 'text', req: true, ph: 'Car down payment', why: 'itemName' },
+      { k: 'aka', label: 'Name to use in reports (optional)', type: 'text', why: 'aka', ph: 'Goal A', hint: 'Your own label. If blank, the report uses a generic one like "Goal A".' },
       { k: 'target', label: 'Amount you want to reach', type: 'money', req: true, why: 'goalTarget' },
       { k: 'saved', label: 'Already saved', type: 'money', zeroOk: true },
       { k: 'contribution', label: 'Set aside from each paycheck', type: 'money', zeroOk: true, why: 'goalContribution' },
@@ -263,7 +264,7 @@ function billItem(b) {
   const nd = nextDue(b);
   return `<div class="item${b.active === false ? ' off' : ''}"><div><div class="nm">${esc(b.name)} ${groupChip(b.group)}${b.active === false ? chip('paused') : ''}</div>
     <div class="small muted">${M(b.amount)} ${VW.freqLabel(b.freq).toLowerCase()}${nd ? ', next ' + U.fmtShort(nd) : ''}</div>
-    ${d ? `<div class="small muted">Owe about ${M(d.balance)} (entered ${M(b.debt.balance)} on ${U.fmtDate(b.debt.balanceDate)}), ${d.apr}% APR ${d.stale > 35 ? chip('balance is ' + d.stale + ' days old', 'warn') : ''}</div>` : ''}</div>
+    ${d ? `<div class="small muted">Owe about ${M(d.balance)} (entered ${M(b.debt.balance)} on ${U.fmtDate(b.debt.balanceDate)}), ${d.apr}% APR ${d.stale > 35 ? chip('balance is ' + d.stale + ' days old', 'warn') + tip('staleChip') : ''}</div>` : ''}</div>
     <div class="row">${d ? `<button class="link" data-act="update-balance" data-id="${b.id}">Update balance</button>` : ''}<button class="link" data-act="edit-bill" data-id="${b.id}">Edit</button></div></div>`;
 }
 function goalItem(x) {
@@ -283,7 +284,7 @@ const SECTIONS = {
 };
 function sectionHtml(id, withIntro) {
   const s = SECTIONS[id], items = s.items();
-  return `<h2 style="margin-top:20px">${s.title}</h2>${withIntro ? `<p class="muted">${s.intro}</p>` : coach(s.intro)}
+  return `<h2 style="margin-top:20px">${s.title}${tip('sec_' + id)}</h2>${withIntro ? `<p class="muted">${s.intro}</p>` : coach(s.intro)}
     <div class="list">${items.join('') || `<div class="muted small">${s.empty}</div>`}</div>
     <div style="margin-top:10px"><button class="btn sec sm" data-act="${s.act}"${s.kind ? ` data-kind="${s.kind}"` : ''}>+ ${s.add}</button></div>`;
 }
@@ -344,39 +345,39 @@ function viewHome() {
   const yard = ['home', 'auto', 'food'].filter(k => ms.byGroup[k] && ms.income).map(k => `${VW.groupName(k)} is ${U.pct(ms.byGroup[k], ms.income)}% of take-home`);
   return `<h1>Home</h1>${bannersHtml()}
   <div class="card"><div class="hero"><div>
-      <div class="muted small">${next ? 'NEXT PAYCHECK' : 'CURRENT PAYCHECK'}</div>
+      <div class="muted small">${next ? 'NEXT PAYCHECK' : 'CURRENT PAYCHECK'}${tip('nextPaycheck')}</div>
       <div class="big">${U.fmtShort(h0.date)} ${next ? `<span class="muted" style="font-size:16px;font-weight:600">${dueIn(h0.date)}</span>` : ''}</div>
       <div class="muted">${M(h0.income)}${h0.estimated ? ' (estimated)' : ''}${next ? ` · covers ${plural(h0.lines.filter(l => !l.skip).length, 'payment')}, leaves ${M(h0.left)}` : ''}</div></div>
-    ${cur ? `<div><div class="muted small">UNTIL THEN</div><div class="big">${M(cur.unpaid)}</div><div class="muted">still to pay from the ${U.fmtMD(cur.date)} paycheck (${plural(cur.lines.filter(l => !l.skip && !l.paid).length, 'payment')})</div></div>
-    <div><div class="muted small">LEFT FROM THAT PAYCHECK</div><div class="big ${cur.left < 0 ? 'bad' : ''}">${M(cur.left)}</div><div class="muted">after everything it covers</div></div>` : ''}
+    ${cur ? `<div><div class="muted small">UNTIL THEN${tip('untilThen')}</div><div class="big">${M(cur.unpaid)}</div><div class="muted">still to pay from the ${U.fmtMD(cur.date)} paycheck (${plural(cur.lines.filter(l => !l.skip && !l.paid).length, 'payment')})</div></div>
+    <div><div class="muted small">LEFT FROM THAT PAYCHECK${tip('leftFromPaycheck')}</div><div class="big ${cur.left < 0 ? 'bad' : ''}">${M(cur.left)}</div><div class="muted">after everything it covers</div></div>` : ''}
   </div>${coach('Each paycheck covers every payment due until the next one arrives. "Left" is what remains after all of them.')}</div>
 
-  <h2>${U.monthLabel(mk)} at a glance</h2>
+  <h2>${U.monthLabel(mk)} at a glance${tip('glance')}</h2>
   <div class="grid tiles">
-    <div class="card tile"><div class="k">Money in</div><div class="v">${MR(ms.income)}</div><div class="s">${ms.heads.length} paycheck${ms.heads.length === 1 ? '' : 's'} dated this month</div></div>
-    <div class="card tile"><div class="k">They must cover</div><div class="v">${MR(ms.out)}</div><div class="s">bills and set-asides in their windows</div></div>
-    <div class="card tile"><div class="k">Left over</div><div class="v ${ms.left < 0 ? 'bad' : ''}">${MR(ms.left)}</div><div class="s">${ms.left < 0 ? 'more going out than coming in' : U.pct(ms.left, ms.income) + '% of money in'}</div></div>
-    <div class="card tile"><div class="k">Due in ${U.monthName(mk)}</div><div class="v">${MR(ms.due)}</div><div class="s">${ms.dueCount} bills by calendar date</div></div>
+    <div class="card tile"><div class="k">Money in${tip('moneyIn')}</div><div class="v">${MR(ms.income)}</div><div class="s">${ms.heads.length} paycheck${ms.heads.length === 1 ? '' : 's'} dated this month</div></div>
+    <div class="card tile"><div class="k">They must cover${tip('mustCover')}</div><div class="v">${MR(ms.out)}</div><div class="s">bills and set-asides in their windows</div></div>
+    <div class="card tile"><div class="k">Left over${tip('leftOver')}</div><div class="v ${ms.left < 0 ? 'bad' : ''}">${MR(ms.left)}</div><div class="s">${ms.left < 0 ? 'more going out than coming in' : U.pct(ms.left, ms.income) + '% of money in'}</div></div>
+    <div class="card tile"><div class="k">Due in ${U.monthName(mk)}${tip('dueMonth')}</div><div class="v">${MR(ms.due)}</div><div class="s">${ms.dueCount} bills by calendar date</div></div>
   </div>
   ${coach(`Why two totals? A paycheck pays for bills that come due <i>after</i> it, even into next month. So "They must cover" and "Due in ${U.monthName(mk)}" can differ. <a class="link" href="#plan">See the split on the Plan page</a>.`)}
 
   <div class="grid two">
-    <div class="card"><h3>Where it goes</h3><p class="muted small">Share of take-home pay, ${U.monthLabel(mk)}. Tap a slice or row for what is in it.</p>
+    <div class="card"><h3>Where it goes${tip('donut')}</h3><p class="muted small">Share of take-home pay, ${U.monthLabel(mk)}. Tap a slice or row for what is in it.</p>
       <div class="donutbox"><div>${VW.donut(sh, { highlight: sec })}</div><div>${VW.shareTable(sh, { highlight: sec })}</div></div>
       ${sec ? `<div class="coach" style="display:block"><b>${esc(VW.groupName(sec))}</b>: ${segLines.length ? segLines.map(l => `${esc(l.name)} ${M(l.amount)}`).join(', ') : 'nothing this month'}.${y ? `<br>${esc(y.text)}` : ''}</div>` : ''}
-      ${yard.length ? `<p class="small muted">${yard.join('. ')}. Yardsticks are on the Learn page. They measure; they do not judge.</p>` : ''}
-      <p class="small muted">One popular split, 50/30/20, for comparison: needs ${x.needsP}% (target 50), wants ${x.wantsP}% (30), savings ${x.saveP}% (20).</p></div>
-    <div class="card"><h3>Coming up</h3><p class="muted small">Tick Paid when you have paid it.</p>
+      ${yard.length ? `<p class="small muted">${yard.join('. ')}. Yardsticks are on the Learn page. They measure; they do not judge.${tip('yardsticks')}</p>` : ''}
+      <p class="small muted">One popular split, 50/30/20, for comparison: needs ${x.needsP}% (target 50), wants ${x.wantsP}% (30), savings ${x.saveP}% (20).${tip('split')}</p></div>
+    <div class="card"><h3>Coming up${tip('comingUp')}</h3><p class="muted small">Tick Paid when you have paid it.</p>
       ${upcoming.length ? `<table><tbody>${upcoming.slice(0, 8).map(l => `<tr><td style="width:28px"><input type="checkbox" data-chg="paid" data-id="${l.id}" aria-label="Paid"></td><td><div class="nm">${esc(l.name)}</div><div class="small muted">${U.fmtShort(l.due)} · ${dueIn(l.due)}</div></td><td class="n">${M(l.amount)}</td></tr>`).join('')}</tbody></table>` : '<p class="muted">Nothing unpaid coming up.</p>'}</div>
   </div>
 
-  <h2>Money in and out, paycheck by paycheck</h2><div class="card">${VW.bars(heads12)}${coach('Blue is the paycheck. Orange is everything it has to pay before the next one. Where orange nears blue, that paycheck is tight.')}</div>
+  <h2>Money in and out, paycheck by paycheck${tip('bars')}</h2><div class="card">${VW.bars(heads12)}${coach('Blue is the paycheck. Orange is everything it has to pay before the next one. Where orange nears blue, that paycheck is tight.')}</div>
 
   ${goals.length || debts.length ? `<div class="grid two" style="margin-top:12px">
-    ${goals.length ? `<div class="card"><h3>Goals</h3>${goals.map(g => { const gf = VW.goalFacts(DB, g); return `<div style="margin-top:10px"><div class="row sp"><span class="nm">${esc(g.name)}</span><span class="small muted">${MR(g.saved)} of ${MR(g.target)}</span></div>${VW.progress(gf.pct)}<div class="small muted">${g.contribution ? `${M(g.contribution)} per paycheck${gf.eta && gf.checks > 0 ? ' · reaches it around ' + U.fmtDate(gf.eta) : ''}` : 'nothing set aside yet'}</div></div>`; }).join('')}</div>` : ''}
-    ${debts.length ? `<div class="card"><h3>Debts</h3>${debts.map(b => { const d = VW.debtFacts(b); return `<div style="margin-top:10px"><div class="row sp"><span class="nm">${esc(b.name)}</span><span class="small muted">about ${M(d.balance)} owed</span></div>${VW.progress(d.progress, 'debt')}<div class="small muted">${d.apr}% APR · ${d.payoffDate ? 'paid off around ' + U.monthLabel(d.payoffDate) + ' at this payment' : d.balance <= 0 ? 'paid off' : 'payment does not cover the interest'}${d.stale > 35 ? ' · ' + chip('balance is ' + d.stale + ' days old', 'warn') : ''}</div></div>`; }).join('')}</div>` : ''}</div>` : ''}
+    ${goals.length ? `<div class="card"><h3>Goals${tip('goals')}</h3>${goals.map(g => { const gf = VW.goalFacts(DB, g); return `<div style="margin-top:10px"><div class="row sp"><span class="nm">${esc(g.name)}</span><span class="small muted">${MR(g.saved)} of ${MR(g.target)}</span></div>${VW.progress(gf.pct)}<div class="small muted">${g.contribution ? `${M(g.contribution)} per paycheck${gf.eta && gf.checks > 0 ? ' · reaches it around ' + U.fmtDate(gf.eta) : ''}` : 'nothing set aside yet'}</div></div>`; }).join('')}</div>` : ''}
+    ${debts.length ? `<div class="card"><h3>Debts${tip('debts')}</h3>${debts.map(b => { const d = VW.debtFacts(b); return `<div style="margin-top:10px"><div class="row sp"><span class="nm">${esc(b.name)}</span><span class="small muted">about ${M(d.balance)} owed</span></div>${VW.progress(d.progress, 'debt')}<div class="small muted">${d.apr}% APR · ${d.payoffDate ? 'paid off around ' + U.monthLabel(d.payoffDate) + ' at this payment' : d.balance <= 0 ? 'paid off' : 'payment does not cover the interest'}${d.stale > 35 ? ' · ' + chip('balance is ' + d.stale + ' days old', 'warn') + tip('staleChip') : ''}</div></div>`; }).join('')}</div>` : ''}</div>` : ''}
 
-  ${facts.length ? `<h2>What the numbers say</h2><div class="card"><ul class="facts">${facts.map(t => `<li>${t}</li>`).join('')}</ul><p class="small muted">Plain facts from your own numbers. They describe; they do not advise.</p></div>` : ''}
+  ${facts.length ? `<h2>What the numbers say${tip('facts')}</h2><div class="card"><ul class="facts">${facts.map(t => `<li>${t}</li>`).join('')}</ul><p class="small muted">Plain facts from your own numbers. They describe; they do not advise.</p></div>` : ''}
 
   <div class="card" style="margin-top:16px"><div class="row sp"><div><h3>Have a question about your money?</h3><p class="muted small" style="margin:2px 0">Pick a question, review the report, and paste it into Claude.</p></div><a class="btn" href="#ask" style="text-decoration:none">Ask Claude</a></div></div>`;
 }
@@ -386,7 +387,7 @@ function rowHtml(l, h) {
   const cls = (l.paid ? 'paid ' : '') + (l.skip ? 'skip' : '');
   return `<tr class="${cls}"><td style="width:28px"><input type="checkbox" data-chg="paid" data-id="${l.id}"${l.paid ? ' checked' : ''}${l.skip ? ' disabled' : ''} aria-label="Paid"></td>
     <td class="n" style="text-align:left;width:92px">${U.fmtShort(l.due).slice(4)}<div class="small muted">${U.dow(l.due)}</div></td>
-    <td><span class="nm">${esc(l.name)}</span> ${l.kind === 'save' ? '' : groupChip(l.group)} ${l.movedIn ? chip('paid early', 'acc') : ''}${l.amount !== l.usual && !l.skip ? chip('changed this time') : ''}${l.skip ? chip('skipped') : ''}</td>
+    <td><span class="nm">${esc(l.name)}</span> ${l.kind === 'save' ? '' : groupChip(l.group)} ${l.movedIn ? chip('paid early', 'acc') + tip('paidEarly') : ''}${l.amount !== l.usual && !l.skip ? chip('changed this time') : ''}${l.skip ? chip('skipped') : ''}</td>
     <td class="n">${M(l.amount)}</td><td class="n after ${l.after < 0 ? 'neg' : ''}">${l.skip ? '' : M(l.after)}</td>
     <td class="n"><button class="link" data-act="line" data-head="${h.date}" data-id="${l.id}">Edit</button></td></tr>`;
 }
@@ -398,27 +399,27 @@ function viewPlan() {
   const dates = ms.heads.map(h => U.fmtMD(h.date)).join(', ');
   const even = n ? Math.round(ms.out / n) : 0;
   const intro = n ? `${U.monthLabel(mk)} has <b>${n} paycheck${n === 1 ? '' : 's'}</b> (${dates}).${weekly && n >= 3 ? ' That is a month with an extra paycheck.' : ''}` : `No paychecks are dated in ${U.monthLabel(mk)}.`;
-  const earlyHtml = ms.early.length ? `<div class="card" style="margin-top:12px"><h3>Due early in ${U.monthName(mk)}, paid from the paycheck before it</h3><p class="muted small">These come due before ${U.monthName(mk)}'s first paycheck, so the previous month's paycheck covers them.</p>
+  const earlyHtml = ms.early.length ? `<div class="card" style="margin-top:12px"><h3>Due early in ${U.monthName(mk)}, paid from the paycheck before it${tip('early')}</h3><p class="muted small">These come due before ${U.monthName(mk)}'s first paycheck, so the previous month's paycheck covers them.</p>
     <table><tbody>${ms.early.map(e => `<tr><td>${U.fmtShort(e.line.due)}</td><td>${esc(e.line.name)}</td><td class="n">${M(e.line.amount)}</td><td class="n small muted">from the ${U.fmtMD(e.head.date)} paycheck</td></tr>`).join('')}</tbody></table></div>` : '';
   const modePanel = state.planMode === 'even' && n ? `<div class="card" style="margin-top:12px"><h3>Two ways to look at the same money</h3>
     <p class="muted small">"By due date" is what actually leaves each paycheck. "Even split" shows what each paycheck would set aside if ${U.monthName(mk)}'s payments were shared equally (${M(ms.out)} ÷ ${n} = ${M(even)}). The app only shows both. Which one fits is up to you.</p>
     <div class="tablewrap"><table><thead><tr><th>Paycheck</th><th class="n">Money in</th><th class="n">By due date</th><th class="n">Even split</th><th class="n">Difference</th></tr></thead><tbody>${ms.heads.map(h => `<tr><td>${U.fmtShort(h.date)}</td><td class="n">${M(h.income)}</td><td class="n">${M(h.out)}</td><td class="n">${M(even)}</td><td class="n">${delta(h.out, even) || '-'}</td></tr>`).join('')}</tbody></table></div></div>` : '';
   const cards = ms.heads.map(h => `<div class="card paycard"><div class="hd"><div><h3>Paycheck ${U.fmtShort(h.date)}${h.date === (f.next && f.next.date) ? ' ' + chip('next', 'acc') : ''}${h.date <= U.today() ? ' ' + chip('current or past') : ''}</h3>
-      <div class="small muted">${M(h.income)} ${h.estimated ? chip('estimated', 'warn') : ''}${h.overridden ? chip('amount changed') : ''} · covers payments due ${U.fmtMD(h.date)} to ${U.fmtMD(U.addDays(h.end, -1))}</div></div>
-      <label class="row small"><input type="checkbox" data-chg="landed" data-date="${h.date}"${h.landed ? ' checked' : ''}> Landed <button class="link" data-act="pay" data-date="${h.date}">Edit amount</button></label></div>
-    <div class="tablewrap"><table><thead><tr><th></th><th>Due</th><th>Payment</th><th class="n">Amount</th><th class="n">Left after</th><th></th></tr></thead><tbody>
+      <div class="small muted">${M(h.income)} ${h.estimated ? chip('estimated', 'warn') + tip('estimatedChip') : ''}${h.overridden ? chip('amount changed') : ''} · covers payments due ${U.fmtMD(h.date)} to ${U.fmtMD(U.addDays(h.end, -1))}</div></div>
+      <label class="row small"><input type="checkbox" data-chg="landed" data-date="${h.date}"${h.landed ? ' checked' : ''}> Landed</label>${tip('landed')} <button class="link" data-act="pay" data-date="${h.date}">Edit amount</button></div>
+    <div class="tablewrap"><table><thead><tr><th></th><th>Due</th><th>Payment</th><th class="n">Amount</th><th class="n">Left after${tip('leftAfter')}</th><th></th></tr></thead><tbody>
     ${h.lines.map(l => rowHtml(l, h)).join('') || '<tr><td colspan="6" class="muted">Nothing due in this window.</td></tr>'}</tbody></table></div>
     <div class="row sp" style="margin-top:8px"><span class="muted small">${M(h.income)} in − ${M(h.out)} out</span><b class="${h.left < 0 ? 'bad' : ''}">${M(h.left)} left</b></div></div>`).join('');
   return `<div class="row sp"><h1>Plan</h1><div class="row"><button class="btn sec sm" data-act="month-prev">‹ Prev</button><b>${U.monthLabel(mk)}</b><button class="btn sec sm" data-act="month-next">Next ›</button><button class="link" data-act="month-today">Today</button></div></div>${bannersHtml()}
   <p>${intro}</p>
-  <div class="grid tiles"><div class="card tile"><div class="k">Money in</div><div class="v">${MR(ms.income)}</div><div class="s">${n} paycheck${n === 1 ? '' : 's'}</div></div>
-    <div class="card tile"><div class="k">They must cover</div><div class="v">${MR(ms.out)}</div><div class="s">in their windows</div></div>
-    <div class="card tile"><div class="k">Left over</div><div class="v ${ms.left < 0 ? 'bad' : ''}">${MR(ms.left)}</div></div>
-    <div class="card tile"><div class="k">Due in ${U.monthName(mk)}</div><div class="v">${MR(ms.due)}</div><div class="s">by calendar date</div></div></div>
+  <div class="grid tiles"><div class="card tile"><div class="k">Money in${tip('moneyIn')}</div><div class="v">${MR(ms.income)}</div><div class="s">${n} paycheck${n === 1 ? '' : 's'}</div></div>
+    <div class="card tile"><div class="k">They must cover${tip('mustCover')}</div><div class="v">${MR(ms.out)}</div><div class="s">in their windows</div></div>
+    <div class="card tile"><div class="k">Left over${tip('leftOver')}</div><div class="v ${ms.left < 0 ? 'bad' : ''}">${MR(ms.left)}</div></div>
+    <div class="card tile"><div class="k">Due in ${U.monthName(mk)}${tip('dueMonth')}</div><div class="v">${MR(ms.due)}</div><div class="s">by calendar date</div></div></div>
   ${coach('Step 1: the month. Step 2: below, the split by paycheck, in date order, with what is left after each payment. Step 3: switch between "by due date" and "even split".')}
   ${earlyHtml}
-  <div class="row" style="margin-top:12px"><div class="seg"><button class="${state.planMode === 'due' ? 'on' : ''}" data-act="plan-mode" data-mode="due">By due date</button><button class="${state.planMode === 'even' ? 'on' : ''}" data-act="plan-mode" data-mode="even">Even split</button></div>
-    <button class="btn sec sm" data-act="add-once">+ One-time payment</button></div>
+  <div class="row" style="margin-top:12px"><div class="seg"><button class="${state.planMode === 'due' ? 'on' : ''}" data-act="plan-mode" data-mode="due">By due date</button><button class="${state.planMode === 'even' ? 'on' : ''}" data-act="plan-mode" data-mode="even">Even split</button></div>${tip(state.planMode === 'even' ? 'modeEven' : 'modeDue')}
+    <button class="btn sec sm" data-act="add-once">+ One-time payment</button>${tip('oneTime')}</div>
   ${modePanel}${cards}`;
 }
 
@@ -468,7 +469,7 @@ function askReportHtml() {
   return `<p class="small"><b>Best effort at removing identifying information. Always review the report before you paste it.</b></p>
     <p class="small muted">Names are replaced with generic labels and long numbers, emails and links are removed${r.scrubbed ? ` (${r.scrubbed} removed from your question)` : ''}. The app cannot know every private detail, so read every line. If you see anything you do not want shared, edit it or delete it below.</p>
     <textarea id="reportText" spellcheck="false" style="min-height:300px">${esc(r.text)}</textarea>
-    <div class="f cb"><label><input type="checkbox" id="reviewed" data-chg="reviewed"${a.reviewed ? ' checked' : ''}> I read the report and it is ready to share</label></div>
+    <div class="f cb"><label><input type="checkbox" id="reviewed" data-chg="reviewed"${a.reviewed ? ' checked' : ''}> I read the report and it is ready to share</label>${tip('review')}</div>
     <div class="row"><button class="btn" data-act="ask-copy"${a.reviewed ? '' : ' disabled'}>Copy report</button><a class="btn sec" href="https://claude.ai/new" target="_blank" rel="noopener noreferrer" style="text-decoration:none">Open Claude in a new tab</a></div>
     <p class="small muted" style="margin-top:8px">Then paste (Ctrl+V or Cmd+V) into Claude and send. The report already asks Claude to begin with "Assuming your numbers are correct, it seems to indicate..." and to describe what the numbers show without telling you what to do.</p>
     <details class="why" open><summary>Your key (stays on this screen, not in the report)</summary><div class="tablewrap"><table><tbody>${map.filter(m => m[1]).map(m => `<tr><td>${esc(m[0])}</td><td>${esc(m[1])}</td></tr>`).join('')}</tbody></table></div></details>`;
@@ -479,12 +480,12 @@ function viewAsk() {
   if (!VW.focus(DB).next && !VW.focus(DB).cur) return `<h1>Ask Claude</h1><div class="card"><p>Add your pay and bills in <a href="#money">My Money</a> first, so there is something to ask about.</p></div>`;
   return `<h1>Ask Claude</h1>${bannersHtml()}
   <p class="muted">Pick a question. The app shows the numbers right away, then builds a report you can paste into Claude. Claude's answer will start with "Assuming your numbers are correct, it seems to indicate..." because it can only describe what is in the numbers you entered.</p>
-  <h2 style="margin-top:16px">1. Choose a question</h2>
+  <h2 style="margin-top:16px">1. Choose a question${tip('askChoose')}</h2>
   <div class="picker">${VW.QUESTIONS.map(x => `<label class="pick${x.id === a.qid ? ' on' : ''}" data-act="askq" data-id="${x.id}"><input type="radio" name="q"${x.id === a.qid ? ' checked' : ''}><b>${esc(x.title)}</b><span>${esc(x.blurb)}</span></label>`).join('')}</div>
-  ${q.fields.length ? `<h2>2. Fill in the details</h2><div class="card">${q.fields.map(f => askFieldHtml(f, a.params)).join('')}</div>` : ''}
-  <h2>${q.fields.length ? '3' : '2'}. What your numbers show</h2><div class="card" id="askOut">${askResultHtml()}</div>
-  <h2>${q.fields.length ? '4' : '3'}. Report for Claude</h2>
-  <div class="card"><div class="f"><label for="a_extra">Anything else to remove from your question? (names, places, separated by commas)</label><input id="a_extra" data-ask="_extra" type="text" value="${esc(a.extra)}" placeholder="for example: Dana, Springfield"></div>
+  ${q.fields.length ? `<h2>2. Fill in the details${tip('askDetails')}</h2><div class="card">${q.fields.map(f => askFieldHtml(f, a.params)).join('')}</div>` : ''}
+  <h2>${q.fields.length ? '3' : '2'}. What your numbers show${tip('askNumbers')}</h2><div class="card" id="askOut">${askResultHtml()}</div>
+  <h2>${q.fields.length ? '4' : '3'}. Report for Claude${tip('askReport')}</h2>
+  <div class="card"><div class="f"><div class="lblrow"><label for="a_extra">Anything else to remove from your question? (names, places, separated by commas)</label>${tip('askExtra')}</div><input id="a_extra" data-ask="_extra" type="text" value="${esc(a.extra)}" placeholder="for example: Dana, Springfield"></div>
   <div id="askReport">${askReportHtml()}</div></div>`;
 }
 function refreshAsk() {
@@ -504,21 +505,21 @@ function lcUpdate() {
 }
 function viewLearn() {
   return `<h1>How money works</h1>${bannersHtml()}<p class="muted">Short lessons. Each says whether it is a fact, a named method, or a commonly quoted yardstick. They describe how things work. They do not tell you what to do. Where possible, the lesson shows your own numbers.</p>
-  ${VW.LESSONS.map((l, i) => { const mine = hasData() && l.mine ? l.mine(DB) : ''; return `<details class="lesson"${i === 0 ? ' open' : ''}><summary><span>${esc(l.title)}</span><span class="chip ${l.kind === 'Fact' ? 'good' : 'acc'}">${esc(l.kind)}</span></summary><div class="in">${l.body.map(t => `<p>${esc(t)}</p>`).join('')}${l.calc ? loanCalcHtml() : ''}${mine ? `<div class="mine"><b>Your numbers</b>${mine}</div>` : ''}</div></details>`; }).join('')}
-  <h2>Words</h2><div class="card"><dl class="gl">${VW.GLOSSARY.map(g => `<dt>${esc(g[0])}</dt><dd>${esc(g[1])}</dd>`).join('')}</dl></div>`;
+  ${VW.LESSONS.map((l, i) => { const mine = hasData() && l.mine ? l.mine(DB) : ''; return `<details class="lesson"${i === 0 ? ' open' : ''}><summary><span>${esc(l.title)}</span><span><span class="chip ${l.kind === 'Fact' ? 'good' : 'acc'}">${esc(l.kind)}</span></span></summary><div class="in"><p class="small muted">This lesson is: <span class="chip ${l.kind === 'Fact' ? 'good' : 'acc'}">${esc(l.kind)}</span>${tip(l.kind === 'Fact' ? 'kind_fact' : /framework/.test(l.kind) ? 'kind_framework' : 'kind_yardstick')}</p>${l.body.map(t => `<p>${esc(t)}</p>`).join('')}${l.calc ? loanCalcHtml() : ''}${mine ? `<div class="mine"><b>Your numbers</b>${mine}</div>` : ''}</div></details>`; }).join('')}
+  <h2>Words${tip('words')}</h2><div class="card"><dl class="gl">${VW.GLOSSARY.map(g => `<dt>${esc(g[0])}</dt><dd>${esc(g[1])}</dd>`).join('')}</dl></div>`;
 }
 
 // ---------- data ----------
 function viewData() {
   return `<h1>Data and settings</h1>${bannersHtml()}
-  <div class="card"><h3>Back up and restore</h3><p class="muted small">Your numbers are stored only in this browser, on this device. Clearing browser data erases them, and another device will not see them. Export a file to keep a copy, and open it later to restore.</p>
+  <div class="card"><h3>Back up and restore${tip('backup')}</h3><p class="muted small">Your numbers are stored only in this browser, on this device. Clearing browser data erases them, and another device will not see them. Export a file to keep a copy, and open it later to restore.</p>
     <div class="row"><button class="btn" data-act="export">Export a backup file</button><button class="btn sec" data-act="open-file">Open a backup file</button><input type="file" id="filein" accept=".json,application/json" hidden></div>
     <p class="small muted">Last backup: ${DB.lastBackup ? U.fmtDate(DB.lastBackup.slice(0, 10)) : 'never'}.${storageOK ? '' : ' This browser is blocking saving.'}</p>
     <p class="small muted">The file holds your financial details in plain text. Keep it private.</p></div>
-  <div class="card" style="margin-top:12px"><h3>Names in reports</h3><p class="muted small">This is an extra step of removing identifying details, and it is your choice. By default the report calls things "Debt 1" or "Home bill 2". You can pick your own names: set a "name to use in reports" when you edit any pay, bill, debt or goal. You can also list words to always replace, such as a bank name or a nickname, and say what they should become.</p>
+  <div class="card" style="margin-top:12px"><h3>Names in reports${tip('aliases')}</h3><p class="muted small">This is an extra step of removing identifying details, and it is your choice. By default the report calls things "Debt 1" or "Home bill 2". You can pick your own names: set a "name to use in reports" when you edit any pay, bill, debt or goal. You can also list words to always replace, such as a bank name or a nickname, and say what they should become.</p>
     <div class="list">${(DB.aliases || []).map((a, i) => `<div class="item"><div><b>${esc(a.term)}</b> <span class="muted">becomes</span> <b>${esc(a.alias || '[removed]')}</b></div><button class="link d" data-act="del-alias" data-i="${i}">Remove</button></div>`).join('') || '<div class="muted small">Nothing listed yet.</div>'}</div>
     <div style="margin-top:10px"><button class="btn sec sm" data-act="add-alias">+ Always replace a word</button></div><p class="small muted">Best effort only. Always read the report before you paste it.</p></div>
-  <div class="card" style="margin-top:12px"><h3>Settings</h3><div class="f cb"><label><input type="checkbox" data-chg="coach"${DB.newToThis ? ' checked' : ''}> New to this: show the plain-English hints</label></div></div>
+  <div class="card" style="margin-top:12px"><h3>Settings</h3><div class="f cb"><label><input type="checkbox" data-chg="coach"${DB.newToThis ? ' checked' : ''}> New to this: show the plain-English hints</label>${tip('coachMode')}</div></div>
   <div class="card" style="margin-top:12px"><h3>Start over</h3><p class="muted small">Erases everything in this browser.</p><div class="row"><button class="btn danger sm" data-act="reset">Erase all my data</button><button class="btn sec sm" data-act="example">Replace with example data</button></div></div>
   <div class="card" style="margin-top:12px"><h3>About</h3><p class="small"><b>This app is a visual aid, not financial advice.</b> It shows where your money is going and when. It does not recommend, evaluate, or approve any financial decision. If you need advice, talk to a qualified professional.</p>
   <p class="small muted">It runs entirely in your browser. It makes no network requests. The report to Claude is only created, and only copied, when you choose to. ${esc(VW.APP_NAME)} version ${VW.VERSION}.</p>
@@ -529,6 +530,7 @@ function viewData() {
 const NAV = [['home', 'Home'], ['plan', 'Plan'], ['money', 'My Money'], ['ask', 'Ask Claude'], ['learn', 'Learn'], ['data', 'Data']];
 const VIEWS = { home: viewHome, plan: viewPlan, money: viewMoney, ask: viewAsk, learn: viewLearn, data: viewData, setup: viewSetup };
 function render() {
+  hideTip();
   const welcome = state.view === 'home' && !DB.onboarded && !hasData();
   const setup = state.view === 'setup';
   const body = (VIEWS[state.view] || viewHome)();
@@ -625,6 +627,27 @@ document.addEventListener('input', e => {
     refreshAsk();
   }
 });
+
+// ---------- "i" hovers ----------
+const tb = $('#tipbox'); let tipEl = null, pinned = false;
+function showTip(el, pin) {
+  const t = VW.TIPS[el.dataset.tip]; if (!t) return;
+  tb.innerHTML = `<p><b>What it is.</b> ${esc(t[0])}</p><p><b>Why it matters.</b> ${esc(t[1])}</p>`;
+  tipEl = el; pinned = !!pin;
+  try { if (!tb.matches(':popover-open')) tb.showPopover(); } catch (e) { tb.style.display = 'block'; }
+  const r = el.getBoundingClientRect(), w = tb.offsetWidth, h = tb.offsetHeight;
+  let left = Math.max(8, Math.min(window.innerWidth - w - 8, r.left + r.width / 2 - w / 2)), top = r.bottom + 8;
+  if (top + h > window.innerHeight - 8) top = Math.max(8, r.top - h - 8);
+  tb.style.left = left + 'px'; tb.style.top = top + 'px';
+}
+function hideTip() { tipEl = null; pinned = false; try { if (tb.matches(':popover-open')) tb.hidePopover(); } catch (e) { tb.style.display = 'none'; } }
+document.addEventListener('mouseover', e => { const t = e.target.closest('.tip'); if (t && !pinned) showTip(t); });
+document.addEventListener('mouseout', e => { const t = e.target.closest('.tip'); if (t && !pinned && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('.tip'))) hideTip(); });
+document.addEventListener('focusin', e => { const t = e.target.closest && e.target.closest('.tip'); if (t) showTip(t); });
+document.addEventListener('focusout', e => { if (e.target.closest && e.target.closest('.tip') && !pinned) hideTip(); });
+document.addEventListener('click', e => { const t = e.target.closest('.tip'); if (t) { e.preventDefault(); if (pinned && tipEl === t) hideTip(); else showTip(t, true); } else if (pinned) hideTip(); }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') hideTip(); });
+window.addEventListener('scroll', () => { if (tipEl) hideTip(); }, { passive: true });
 
 DB = load();
 window.addEventListener('hashchange', route);

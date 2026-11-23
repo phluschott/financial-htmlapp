@@ -10,6 +10,8 @@ It is built for the "what does the next two weeks look like?" problem: bills pul
 
 ![A paycheck card listing income and ten payments in date order, with a running balance after each and $347.53 left to play with](docs/assets/screenshot.png)
 
+> **Newer, in the browser:** [Paycheck Weathervane](docs/app/README.md) is a simpler, ground-up app for people new to managing money. It needs no download: when GitHub Pages is on, it opens at `/app/` on the project page.
+
 ## Features
 
 - **One card per paycheck.** Bills, subscriptions, credit card minimums, and transfers land on the paycheck that comes before their due date. Move or skip any single payment.
