@@ -140,7 +140,9 @@ function buildPlan(mk) {
   const isUntracked = (it, date) => it.chargeTo === '_untracked' && it.category !== 'Debt payment' && date >= (it.chargeSince || '');
   for (const it of DB.items) {
     if (it.active === false) continue;
-    const dues = occurrences(it, lo, hi);
+    // The date entered on an item is its first due date. Earlier repeats of the schedule are not tracked, unless a
+    // payment was recorded against one (so nothing you already paid or checked off disappears).
+    const dues = occurrences(it, lo, hi).filter(d => d >= it.anchor || ((o => o && (o.paid || o.cleared || (o.partials && o.partials.length)))(DB.occ[it.id + ':' + d])));
     const history = it.category === 'Debt payment' ? occurrences(it, addDays(lo, -400), hi) : [];
     for (const due of dues) {
       if (chargedOn(it, due)) continue;
@@ -469,7 +471,7 @@ function itemForm(id) {
       + sel('Amount', 'mode', [['fixed', 'Fixed — same every time'], ['ask', 'Varies — I confirm each time']], it.mode)
       + money$('Typical amount', 'amount', it.mode === 'ask' ? (it.lastAmount ?? it.amount) : it.amount)
       + sel('How often', 'freq', FREQS, it.freq)
-      + fld('A due date (the schedule repeats from it)', 'anchor', it.anchor, 'type="date"')
+      + fld('First due date (earlier dates are not tracked)', 'anchor', it.anchor, 'type="date"')
       + fld('APR % (optional, used for interest estimates on the Balances page)', 'apr', it.apr ?? '', 'inputmode="decimal" placeholder="e.g. 24.99"', 'data-showif="category=Debt payment"')
       + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
       + fld('Goes to (e.g. Ally Savings)', 'dest', it.dest || '', '', 'data-showif="category=Transfer"')
