@@ -148,6 +148,7 @@ function buildPlan(mk) {
       const unt = isUntracked(it, due);
       const h = o.moveTo && !unt ? H.find(x => x.date === o.moveTo) : at(due);
       if (!h) continue;
+      const nat = at(due), movedFrom = nat && nat !== h ? nat.date : '';
       const baseDue = o.amount !== undefined ? o.amount : itemAmount(it);
       // Payments toward this due date nest under the debt, like a ledger. They apply to this due date only and
       // reduce what is still to pay. Each is deducted on the paycheck it was paid from (p.head, else the one
@@ -176,7 +177,7 @@ function buildPlan(mk) {
         kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
         grp: key, ord: 0, base, baseDue, partials, paidSoFar, over, charges, amount: base + sum(charges, c => c.amount),
         paid: !!o.paid || (paidSoFar > 0 && base === 0 && !charges.length), cleared: !!o.cleared, skip: !!o.skip,
-        untracked: unt, note: unt ? (it.untrackedNote || '') : '',
+        untracked: unt, note: unt ? (it.untrackedNote || '') : '', movedFrom,
         needsConfirm: (it.mode === 'ask' && !o.confirmed) || charges.some(c => c.needsConfirm)
       });
       for (const p of partials) {
@@ -466,7 +467,7 @@ function itemForm(id) {
       + sel('Amount', 'mode', [['fixed', 'Fixed — same every time'], ['ask', 'Varies — I confirm each time']], it.mode)
       + money$('Typical amount', 'amount', it.mode === 'ask' ? (it.lastAmount ?? it.amount) : it.amount)
       + sel('How often', 'freq', FREQS, it.freq)
-      + fld('Next due date', 'anchor', it.anchor, 'type="date"')
+      + fld('A due date (the schedule repeats from it)', 'anchor', it.anchor, 'type="date"')
       + fld('APR % (optional, used for interest estimates on the Balances page)', 'apr', it.apr ?? '', 'inputmode="decimal" placeholder="e.g. 24.99"', 'data-showif="category=Debt payment"')
       + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
       + fld('Goes to (e.g. Ally Savings)', 'dest', it.dest || '', '', 'data-showif="category=Transfer"')
@@ -601,7 +602,7 @@ function lineForm(headDate, key) {
         + (l.charges.length ? `<p class="help">Charged to this account since the last payment. These are added to the amount above, so this payment totals <b>${money(l.amount)}</b>:</p>` + l.charges.map((c, n) => money$(`${esc(c.it.name)} · ${fmtShort(c.date)}${c.needsConfirm ? ' (confirm)' : ''}`, 'c' + n, c.amount)).join('') : '')
         + chk('Paid', 'paid', l.paid) + chk('Cleared (shows in the bank)', 'cleared', l.cleared)
         + sel('Pay this from', 'moveTo', headOptions(), h.date)
-        + chk('Skip this time (not due / handled elsewhere)', 'skip', l.skip),
+        + chk('Skip this time (already paid, not due, or handled elsewhere)', 'skip', l.skip) + '<p class="help">Skipping takes it out of this paycheck\'s totals. Use it for a bill you paid before you started using the app.</p>',
       onSubmit: fd => {
         const amount = parseMoney(fd.get('amount')); if (amount < 0) return 'Enter an amount.';
         const cleared = fd.get('cleared') === 'on', paid = fd.get('paid') === 'on' || cleared, mv = fd.get('moveTo');
@@ -752,8 +753,10 @@ function chargedCell(i) {
   const d = i.chargeTo && byId(DB.items, i.chargeTo);
   return d && d.category === 'Debt payment' ? `<b>${esc(d.name)}</b>` : '<span class="muted">Paycheck (directly)</span>';
 }
+// The stored date is only the anchor the schedule repeats from; show the next date that is actually coming up.
+const nextDue = i => occurrences(i, today(), addDays(today(), 800))[0] || i.anchor;
 function secItems() {
-  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}${i.apr ? ' · ' + i.apr + '% APR' : ''}${i.category === 'Debt payment' && !i.apr ? ' · <button class="link" data-act="edit-item" data-id="' + i.id + '">add APR</button>' : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td>${chargedCell(i)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
+  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}${i.apr ? ' · ' + i.apr + '% APR' : ''}${i.category === 'Debt payment' && !i.apr ? ' · <button class="link" data-act="edit-item" data-id="' + i.id + '">add APR</button>' : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(nextDue(i))}</td><td>${chargedCell(i)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
   return `<div class="card"><div class="head"><h2>Bills, subscriptions &amp; debts</h2><button class="primary" data-act="add-item">+ Add item</button></div>
     <p class="help">Everything that pulls money on a schedule: subscriptions, bills, credit card minimums, mortgage, and regular transfers to savings. Each lands on the paycheck that comes before its due date. If a bill is charged to a credit card, set <b>Charged to</b> and it is added to that card's payment instead of being paid separately.</p>
     <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th>Charged to</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted">Nothing added yet.</td></tr>'}</tbody></table></div></div>`;
@@ -821,7 +824,7 @@ function rowHtml(h, r) {
   }
   const nestedInfo = (r.partials || []).filter(p => !p.here).map(p => `<tr class="sub info"><td class="small">${fmtShort(p.date)}</td><td class="name">↳ ${p.extra ? 'Extra payment' : 'Payment'}, paid from the ${fmtShort(p.ph)} paycheck</td><td class="num muted" title="Deducted on the ${fmtShort(p.ph)} paycheck">${money(p.amount)}</td><td class="num muted">—</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link" data-act="part-pay" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`).join('');
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
-    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}${r.movedFrom ? `<span class="chip proj" title="Due ${fmtShort(r.due)}, moved from the ${fmtShort(r.movedFrom)} paycheck. Edit it and pick that paycheck in Pay this from to put it back.">moved from ${fmtShort(r.movedFrom)} paycheck</span>` : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>
