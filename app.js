@@ -574,6 +574,11 @@ function partForm(headDate, key) {
       + sel('Paid from', 'phead', headOptions(), (lastPlan.all.find(x => today() >= x.date && today() < x.end) || h).date)
       + chk('This is extra, on top of the minimum', 'extra', l.base === 0)
       + '<p class="help"><b>Not ticked:</b> the payment counts toward what is due, so "Left to play with" does not change (it was already set aside). <b>Ticked:</b> it is on top of what is due, so "Left to play with" goes down by that amount.</p>',
+    // The date paid decides which paycheck the money came out of (you can still change "Paid from" afterwards).
+    after: form => form.elements.pdate.addEventListener('change', () => {
+      const d = form.elements.pdate.value, hh = lastPlan.all.find(x => d >= x.date && d < x.end);
+      if (hh) form.elements.phead.value = hh.date;
+    }),
     onSubmit: fd => {
       const due = parseMoney(fd.get('due')), add = parseMoney(fd.get('paid'));
       if (due < 0) return 'Enter the amount due.';
