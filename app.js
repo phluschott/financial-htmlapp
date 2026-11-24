@@ -809,7 +809,7 @@ function viewOnboard() {
   return `<div class="topbar"><span class="brand">Visual Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
 }
 
-function rowHtml(h, r) {
+function rowHtml(h, r, hideSubs) {
   const d = fmtShort(r.date);
   if (r.kind === 'pay' || r.kind === 'xpay') {
     const landed = r.kind === 'xpay' || r.pay.landed;
@@ -839,7 +839,7 @@ function rowHtml(h, r) {
   }
   const nestedInfo = (r.partials || []).filter(p => !p.here).map(p => `<tr class="sub info"><td class="small">${fmtShort(p.date)}</td><td class="name">↳ ${p.extra ? 'Extra payment' : 'Payment'}, paid from the ${fmtShort(p.ph)} paycheck</td><td class="num muted" title="Deducted on the ${fmtShort(p.ph)} paycheck">${money(p.amount)}</td><td class="num muted">—</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link" data-act="part-pay" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`).join('');
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
-    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}${r.movedFrom ? `<span class="chip proj" title="Due ${fmtShort(r.due)}, moved from the ${fmtShort(r.movedFrom)} paycheck. Edit it and pick that paycheck in Pay this from to put it back.">moved from ${fmtShort(r.movedFrom)} paycheck</span>` : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}${r.movedFrom ? `<span class="chip proj" title="Due ${fmtShort(r.due)}, moved from the ${fmtShort(r.movedFrom)} paycheck. Edit it and pick that paycheck in Pay this from to put it back.">moved from ${fmtShort(r.movedFrom)} paycheck</span>` : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${hideSubs ? money(sum(r.charges, c => c.amount)) + ' charged to this card' : r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>
@@ -892,16 +892,21 @@ function openReport(date) {
       <div style="margin-top:8px"><button type="button" class="primary" data-act="report-copy">Copy to clipboard</button> <button type="button" data-act="report-save" data-date="${date}">Download .txt</button> <span class="pos small" id="report-msg"></span></div>`
   });
 }
-function checkCard(h, plan) {
+function checkCard(h, plan, hideSubs) {
   const isNext = h.date === plan.next, t = today();
   const cur = h.date <= t && t < h.end;
   const badge = isNext ? '<span class="badge next">Next paycheck</span>' : (plan.inProgress === h ? '<span class="badge">Still in progress</span>' : cur ? '<span class="badge">Current period</span>' : '');
-  const n = h.rows.filter(r => r.t === 1 && !r.skip && !r.untracked && r.kind !== 'partial').length, u = h.rows.filter(r => r.untracked && !r.skip).length;
+  // On the Now page subscriptions are left out of the list (they are still counted in every total).
+  const isSub = r => r.kind === 'item' && r.category === 'Subscription';
+  const shown = hideSubs ? h.rows.filter(r => !isSub(r)) : h.rows, hidden = hideSubs ? h.rows.filter(isSub) : [];
+  const hiddenOut = sum(hidden.filter(r => !r.skip && !r.untracked), r => r.amount), hiddenOther = hidden.filter(r => r.untracked && !r.skip).length;
+  const n = shown.filter(r => r.t === 1 && !r.skip && !r.untracked && r.kind !== 'partial').length, u = shown.filter(r => r.untracked && !r.skip).length;
   return `<div class="card check${isNext ? ' next' : ''}" id="chk-${h.date}">
     <div class="head"><div><h2>${fmtShort(h.date)} paycheck ${badge}</h2><span class="muted small">Pays for ${fmtDate(h.date)} – ${fmtDate(addDays(h.end, -1))} · ${n} payment${n === 1 ? '' : 's'}${u ? ` · ${u} untracked` : ''}</span></div>
       <div class="leftbox"><div class="muted small">Left to play with</div><div class="big2 ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div></div></div>
     ${h.minRun < 0 ? `<div class="banner err small">Runs short by ${money(-h.minRun)} on ${fmtShort(h.minDate)} unless something moves.</div>` : ''}
-    <div class="tbl-wrap"><table class="tl"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Left after</th><th class="chk">Paid</th><th class="chk">Clrd</th><th></th></tr></thead><tbody>${h.rows.map(r => rowHtml(h, r)).join('')}</tbody></table></div>
+    <div class="tbl-wrap"><table class="tl"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Left after</th><th class="chk">Paid</th><th class="chk">Clrd</th><th></th></tr></thead><tbody>${shown.map(r => rowHtml(h, r, hideSubs)).join('')}</tbody></table></div>
+    ${hidden.length ? `<p class="muted small" style="margin:6px 0">Subscriptions are hidden here${hiddenOut ? `: ${money(hiddenOut)} comes out of this paycheck and is included in the numbers above` : ''}${hiddenOther ? `${hiddenOut ? '; ' : ': '}${hiddenOther} paid from another account` : ''}.</p>` : ''}
     <div class="actions" style="justify-content:flex-start">
       <button data-act="add-line" data-head="${h.date}">+ Add payment / allocation</button>
       ${h.left > 0 ? `<button class="primary" data-act="add-line" data-head="${h.date}" data-amt="${h.left}">Allocate what’s left (${money(h.left)})</button>` : ''}
@@ -1086,7 +1091,7 @@ function viewNow() {
   const box = (label, h) => h ? `<div class="stat"><div class="k">${label}</div><div class="v ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div><div class="muted small">${h.left < 0 ? 'short' : 'left to play with'}</div></div>` : '';
   const top = `<div class="card"><div class="head"><div><h2>${fmtShort(t)}, ${t.slice(0, 4)}</h2><span class="muted small">${nxt ? `Next paycheck ${fmtShort(nxt.date)}, ${days === 1 ? 'tomorrow' : 'in ' + days + ' days'}` : ''}</span></div><button data-act="report-next">Next paycheck report</button></div>
     <div class="stats" style="margin-top:8px">${box('This paycheck', cur)}${box('Next paycheck', nxt)}</div></div>`;
-  return top + heads.map(h => checkCard(h, view)).join('') + cardsTable();
+  return top + heads.map(h => checkCard(h, view, true)).join('') + cardsTable();
 }
 function viewCards() { return cardsTable() + `<details class="card"><summary><b>History and month-to-month changes</b></summary>${viewBalances()}</details>`; }
 function cardBalanceForm(id) {
