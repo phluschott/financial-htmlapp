@@ -29,7 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
-const VERSION = '2.0.0';
+const VERSION = '2.0.1';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -148,6 +148,7 @@ function buildPlan(mk) {
       const unt = isUntracked(it, due);
       const h = o.moveTo && !unt ? H.find(x => x.date === o.moveTo) : at(due);
       if (!h) continue;
+      const nat = at(due), movedFrom = nat && nat !== h ? nat.date : '';
       const baseDue = o.amount !== undefined ? o.amount : itemAmount(it);
       // Payments toward this due date nest under the debt, like a ledger. They apply to this due date only and
       // reduce what is still to pay. Each is deducted on the paycheck it was paid from (p.head, else the one
@@ -156,8 +157,10 @@ function buildPlan(mk) {
         const ph = (p.head && H.find(x => x.date === p.head)) || at(p.date) || h;
         return { ...p, i, ph: ph.date, here: ph === h };
       });
-      const paidSoFar = sum(partials, p => p.amount);
-      const base = Math.max(baseDue - paidSoFar, 0), over = Math.max(paidSoFar - baseDue, 0);
+      // A payment toward what is due reduces the amount still to pay (so the paycheck total does not change).
+      // A payment flagged "extra" is on top of what is due: it does not reduce it, so it lowers what is left.
+      const paidSoFar = sum(partials, p => p.amount), extraPaid = sum(partials.filter(p => p.extra), p => p.amount), minPaid = paidSoFar - extraPaid;
+      const base = Math.max(baseDue - minPaid, 0), over = Math.max(minPaid - baseDue, 0);
       const mainSd = due < h.date ? h.date : due;
       const charges = [];
       if (it.category === 'Debt payment') {
@@ -174,9 +177,9 @@ function buildPlan(mk) {
       }
       h.lines.push({
         kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
-        grp: key, ord: 0, base, baseDue, partials, paidSoFar, over, charges, amount: base + sum(charges, c => c.amount),
-        paid: !!o.paid || (paidSoFar > 0 && base === 0 && !charges.length), cleared: !!o.cleared, skip: !!o.skip,
-        untracked: unt, note: unt ? (it.untrackedNote || '') : '',
+        grp: key, ord: 0, base, baseDue, partials, paidSoFar, minPaid, extraPaid, over, charges, amount: base + sum(charges, c => c.amount),
+        paid: !!o.paid || (minPaid > 0 && base === 0 && !charges.length), cleared: !!o.cleared, skip: !!o.skip,
+        untracked: unt, note: unt ? (it.untrackedNote || '') : '', movedFrom,
         needsConfirm: (it.mode === 'ask' && !o.confirmed) || charges.some(c => c.needsConfirm)
       });
       for (const p of partials) {
@@ -466,7 +469,7 @@ function itemForm(id) {
       + sel('Amount', 'mode', [['fixed', 'Fixed — same every time'], ['ask', 'Varies — I confirm each time']], it.mode)
       + money$('Typical amount', 'amount', it.mode === 'ask' ? (it.lastAmount ?? it.amount) : it.amount)
       + sel('How often', 'freq', FREQS, it.freq)
-      + fld('Next due date', 'anchor', it.anchor, 'type="date"')
+      + fld('A due date (the schedule repeats from it)', 'anchor', it.anchor, 'type="date"')
       + fld('APR % (optional, used for interest estimates on the Balances page)', 'apr', it.apr ?? '', 'inputmode="decimal" placeholder="e.g. 24.99"', 'data-showif="category=Debt payment"')
       + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
       + fld('Goes to (e.g. Ally Savings)', 'dest', it.dest || '', '', 'data-showif="category=Transfer"')
@@ -553,7 +556,13 @@ function extraIncomeForm(headDate, id) {
     }
   });
 }
-const partText = r => r.paidSoFar ? `${money(r.baseDue)} due, ${money(r.paidSoFar)} paid, ${r.over ? 'overpaid by ' + money(r.over) : money(r.base) + ' to go'}` : '';
+const partText = r => {
+  if (!r.paidSoFar) return '';
+  const bits = [`${money(r.baseDue)} due`];
+  if (r.minPaid) bits.push(`${money(r.minPaid)} paid`, r.over ? 'overpaid by ' + money(r.over) : money(r.base) + ' to go');
+  if (r.extraPaid) bits.push(`${money(r.extraPaid)} extra paid`);
+  return bits.join(', ');
+};
 function partForm(headDate, key) {
   const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
   return modal({
@@ -564,7 +573,12 @@ function partForm(headDate, key) {
       + money$('Payment made', 'paid', 0) + dateF('Date paid', 'pdate', today())
       + sel('Paid from', 'phead', headOptions(), (lastPlan.all.find(x => today() >= x.date && today() < x.end) || h).date)
       + chk('This is extra, on top of the minimum', 'extra', l.base === 0)
-      + '<p class="help">Tick this when the payment goes beyond what is due. The Balances page uses it to show how much you paid above the minimum.</p>',
+      + '<p class="help"><b>Not ticked:</b> the payment counts toward what is due, so "Left to play with" does not change (it was already set aside). <b>Ticked:</b> it is on top of what is due, so "Left to play with" goes down by that amount.</p>',
+    // The date paid decides which paycheck the money came out of (you can still change "Paid from" afterwards).
+    after: form => form.elements.pdate.addEventListener('change', () => {
+      const d = form.elements.pdate.value, hh = lastPlan.all.find(x => d >= x.date && d < x.end);
+      if (hh) form.elements.phead.value = hh.date;
+    }),
     onSubmit: fd => {
       const due = parseMoney(fd.get('due')), add = parseMoney(fd.get('paid'));
       if (due < 0) return 'Enter the amount due.';
@@ -601,7 +615,7 @@ function lineForm(headDate, key) {
         + (l.charges.length ? `<p class="help">Charged to this account since the last payment. These are added to the amount above, so this payment totals <b>${money(l.amount)}</b>:</p>` + l.charges.map((c, n) => money$(`${esc(c.it.name)} · ${fmtShort(c.date)}${c.needsConfirm ? ' (confirm)' : ''}`, 'c' + n, c.amount)).join('') : '')
         + chk('Paid', 'paid', l.paid) + chk('Cleared (shows in the bank)', 'cleared', l.cleared)
         + sel('Pay this from', 'moveTo', headOptions(), h.date)
-        + chk('Skip this time (not due / handled elsewhere)', 'skip', l.skip),
+        + chk('Skip this time (already paid, not due, or handled elsewhere)', 'skip', l.skip) + '<p class="help">Skipping takes it out of this paycheck\'s totals. Use it for a bill you paid before you started using the app.</p>',
       onSubmit: fd => {
         const amount = parseMoney(fd.get('amount')); if (amount < 0) return 'Enter an amount.';
         const cleared = fd.get('cleared') === 'on', paid = fd.get('paid') === 'on' || cleared, mv = fd.get('moveTo');
@@ -619,14 +633,14 @@ function lineForm(headDate, key) {
   const x = l.x;
   return modal({
     title: 'Edit ' + x.name,
-    body: fld('Name', 'name', x.name, 'required') + sel('Category', 'category', CATS, x.category) + (x.category === 'Transfer' ? fld('Goes to', 'dest', x.dest || '') : '')
+    body: fld('Name', 'name', x.name, 'required') + (x.category === 'Adjustment' ? '' : sel('Category', 'category', CATS, x.category)) + (x.category === 'Transfer' ? fld('Goes to', 'dest', x.dest || '') : '')
       + money$('Amount', 'amount', x.amount) + dateF('Date', 'date', x.date) + sel('Pay this from', 'headDate', headOptions(), x.headDate)
       + chk('Paid', 'paid', x.paid) + chk('Cleared', 'cleared', x.cleared)
       + `<button type="button" class="link danger" data-act="del-extra" data-id="${x.id}">Delete this line</button>`,
     onSubmit: fd => {
       const amount = parseMoney(fd.get('amount')); if (amount <= 0) return 'Enter an amount.';
       const cleared = fd.get('cleared') === 'on';
-      Object.assign(x, { name: fd.get('name').trim(), category: fd.get('category'), dest: fd.get('dest') ? fd.get('dest').trim() : x.dest, amount, date: fd.get('date'), headDate: fd.get('headDate'), paid: fd.get('paid') === 'on' || cleared, cleared });
+      Object.assign(x, { name: fd.get('name').trim(), category: x.category === 'Adjustment' ? 'Adjustment' : fd.get('category'), dest: fd.get('dest') ? fd.get('dest').trim() : x.dest, amount, date: fd.get('date'), headDate: fd.get('headDate'), paid: fd.get('paid') === 'on' || cleared, cleared });
       commit();
     }
   });
@@ -635,10 +649,12 @@ function addLineForm(headDate, presetAmount = 0) {
   const debts = DB.items.filter(i => i.category === 'Debt payment' && i.active !== false);
   return modal({
     title: 'Add to this paycheck',
-    body: sel('What is it?', 'kind', [['debt', 'Payment toward a debt (partial or extra)'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
+    body: sel('What is it?', 'kind', [['debt', 'Payment toward a debt (partial or extra)'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['adjust', 'Balance adjustment (spending or a correction)'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
       + sel('Which debt', 'itemId', [['', '— other —'], ...debts.map(d => [d.id, d.name])], '', 'data-showif="kind=debt"')
-      + chk('This is extra, on top of the minimum', 'extra', false, 'data-showif="kind=debt"')
+      + chk('This is extra, on top of the minimum (lowers Left to play with)', 'extra', false, 'data-showif="kind=debt"')
       + fld('Name', 'name', '', '', 'data-showif="kind=debt|transfer|bill"')
+      + fld('Note (optional, e.g. groceries)', 'adjname', '', '', 'data-showif="kind=adjust"')
+      + '<p class="help" data-showif="kind=adjust">Takes this amount off "Left to play with" for the paycheck, for spending or any correction. It is marked paid. To add money back, use + Extra income.</p>'
       + fld('Goes to (e.g. Ally Savings)', 'dest', '', '', 'data-showif="kind=transfer"')
       + sel('Fund', 'fundId', DB.funds.map(f => [f.id, `${f.name} (${money(fundBalance(f.id))})`]), '', 'data-showif="kind=fundin|fundout"')
       + money$('Amount', 'amount', presetAmount) + dateF('Date', 'date', headDate >= today() ? headDate : today()) + fld('Note (optional)', 'note', '', '', 'data-showif="kind=fundin|fundout"')
@@ -670,6 +686,9 @@ function addLineForm(headDate, presetAmount = 0) {
         const nextDue = occurrences(it, date, addDays(date, 400))[0], key = line ? line.key : (nextDue ? it.id + ':' + nextDue : null);
         if (!key) return 'That debt has no upcoming due date.';
         setOcc(key, { partials: [...((DB.occ[key] || {}).partials || []), { date, amount, head: fd.get('headDate'), extra: fd.get('extra') === 'on' }] });
+      } else if (kind === 'adjust') {
+        const note = fd.get('adjname').trim();
+        DB.extras.push({ id: uid(), headDate: fd.get('headDate'), date: fd.get('date'), name: note ? 'Balance adjustment: ' + note : 'Balance adjustment', category: 'Adjustment', dest: '', amount, paid: true, cleared: false });
       } else {
         let name = fd.get('name').trim(); if (!name) return 'Give it a name.';
         DB.extras.push({ id: uid(), headDate: fd.get('headDate'), date: fd.get('date'), name, category: kind === 'debt' ? 'Debt payment' : kind === 'transfer' ? 'Transfer' : 'Bill', dest: kind === 'transfer' ? fd.get('dest').trim() : '', amount, paid: false, cleared: false });
@@ -747,8 +766,10 @@ function chargedCell(i) {
   const d = i.chargeTo && byId(DB.items, i.chargeTo);
   return d && d.category === 'Debt payment' ? `<b>${esc(d.name)}</b>` : '<span class="muted">Paycheck (directly)</span>';
 }
+// The stored date is only the anchor the schedule repeats from; show the next date that is actually coming up.
+const nextDue = i => occurrences(i, today(), addDays(today(), 800))[0] || i.anchor;
 function secItems() {
-  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}${i.apr ? ' · ' + i.apr + '% APR' : ''}${i.category === 'Debt payment' && !i.apr ? ' · <button class="link" data-act="edit-item" data-id="' + i.id + '">add APR</button>' : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(i.anchor)}</td><td>${chargedCell(i)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
+  const rows = [...DB.items].sort((a, b) => CATS.indexOf(a.category) - CATS.indexOf(b.category) || a.name.localeCompare(b.name)).map(i => `<tr><td>${esc(i.name)}${i.active === false ? ' <span class="chip">inactive</span>' : ''}<div class="muted small">${esc(i.category)}${i.dest ? ' → ' + esc(i.dest) : ''}${i.apr ? ' · ' + i.apr + '% APR' : ''}${i.category === 'Debt payment' && !i.apr ? ' · <button class="link" data-act="edit-item" data-id="' + i.id + '">add APR</button>' : ''}</div></td><td>${FREQS.find(f => f[0] === i.freq)[1]} · next ${fmtDate(nextDue(i))}</td><td>${chargedCell(i)}</td><td class="num">${money(itemAmount(i))}${i.mode === 'ask' ? '<span class="chip">varies</span>' : ''}</td><td class="num"><button class="link" data-act="edit-item" data-id="${i.id}">Edit</button><button class="link danger" data-act="del-item" data-id="${i.id}">Delete</button></td></tr>`).join('');
   return `<div class="card"><div class="head"><h2>Bills, subscriptions &amp; debts</h2><button class="primary" data-act="add-item">+ Add item</button></div>
     <p class="help">Everything that pulls money on a schedule: subscriptions, bills, credit card minimums, mortgage, and regular transfers to savings. Each lands on the paycheck that comes before its due date. If a bill is charged to a credit card, set <b>Charged to</b> and it is added to that card's payment instead of being paid separately.</p>
     <div class="tbl-wrap"><table><thead><tr><th>Name</th><th>Schedule</th><th>Charged to</th><th class="num">Amount</th><th></th></tr></thead><tbody>${rows || '<tr><td colspan="5" class="muted">Nothing added yet.</td></tr>'}</tbody></table></div></div>`;
@@ -816,7 +837,7 @@ function rowHtml(h, r) {
   }
   const nestedInfo = (r.partials || []).filter(p => !p.here).map(p => `<tr class="sub info"><td class="small">${fmtShort(p.date)}</td><td class="name">↳ ${p.extra ? 'Extra payment' : 'Payment'}, paid from the ${fmtShort(p.ph)} paycheck</td><td class="num muted" title="Deducted on the ${fmtShort(p.ph)} paycheck">${money(p.amount)}</td><td class="num muted">—</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link" data-act="part-pay" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`).join('');
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
-    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}${r.movedFrom ? `<span class="chip proj" title="Due ${fmtShort(r.due)}, moved from the ${fmtShort(r.movedFrom)} paycheck. Edit it and pick that paycheck in Pay this from to put it back.">moved from ${fmtShort(r.movedFrom)} paycheck</span>` : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>

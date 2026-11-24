@@ -52,6 +52,10 @@ A serverless, offline, single-folder browser app: **"I have a paycheck coming â€
 - Math (`paymentsBetween`, `checkinSteps`, `estimateNow`): between two check-ins A and B, paid = scheduled payments marked paid (counted on due date, = minimum) + nested payments dated in (A, B] (extra if flagged); interest estimate = A balance x APR x days/365; leftover = B - (A + interest - paid) is shown as "charges / fees (estimate)". Charges are never tracked. The user's actuals override every estimate. Legacy standalone "Extra: <debt>" lines are not linked to a card and are ignored.
 - Also in 2.0.0: APR field ("add APR" link in Setup), sinking fund **opening balance** (a fund move with `opening: true` and no headDate, so it never touches a paycheck). The user chose to call this 2.0 and ship something usable rather than perfect. Snowball/avalanche and payoff projections were dropped; "where does the money go" is a separate future topic. Hash is in `docs/downloads/SHA256SUMS`, notes in `releases/v2.0.0.md`.
 
+## Shipped in v2.0.1 (2026-11-24)
+- Balance adjustment (an extra line with category `Adjustment`, paid, named "Balance adjustment: <note>"; the edit form keeps the category). Fix: partials flagged `extra` no longer reduce `base`, so they lower Left to play with (`minPaid`/`extraPaid` in `buildPlan`, and `partText`). Fix: the Payments window syncs "Paid from" to the date paid. Setup shows `nextDue(i)` (the next real date) instead of the stored anchor; item lines moved by a "Pay this from" override show a "moved from" chip (`movedFrom`); the Skip label and help now mention bills paid before starting. Hash is in `docs/downloads/SHA256SUMS`, notes in `releases/v2.0.1.md`.
+- Rule the user confirmed: the paycheck the money came out of takes the deduction, and the paycheck where it was due is relieved by the same amount.
+
 ## Open to-dos
 1. (Done in 1.0.1) rename to "Visual Paycheck Planner".
 2. No LICENSE file; landing page says "Free". Ask the user which license.
