@@ -157,8 +157,10 @@ function buildPlan(mk) {
         const ph = (p.head && H.find(x => x.date === p.head)) || at(p.date) || h;
         return { ...p, i, ph: ph.date, here: ph === h };
       });
-      const paidSoFar = sum(partials, p => p.amount);
-      const base = Math.max(baseDue - paidSoFar, 0), over = Math.max(paidSoFar - baseDue, 0);
+      // A payment toward what is due reduces the amount still to pay (so the paycheck total does not change).
+      // A payment flagged "extra" is on top of what is due: it does not reduce it, so it lowers what is left.
+      const paidSoFar = sum(partials, p => p.amount), extraPaid = sum(partials.filter(p => p.extra), p => p.amount), minPaid = paidSoFar - extraPaid;
+      const base = Math.max(baseDue - minPaid, 0), over = Math.max(minPaid - baseDue, 0);
       const mainSd = due < h.date ? h.date : due;
       const charges = [];
       if (it.category === 'Debt payment') {
@@ -175,8 +177,8 @@ function buildPlan(mk) {
       }
       h.lines.push({
         kind: 'item', key, it, due, name: it.name, category: it.category, dest: it.dest,
-        grp: key, ord: 0, base, baseDue, partials, paidSoFar, over, charges, amount: base + sum(charges, c => c.amount),
-        paid: !!o.paid || (paidSoFar > 0 && base === 0 && !charges.length), cleared: !!o.cleared, skip: !!o.skip,
+        grp: key, ord: 0, base, baseDue, partials, paidSoFar, minPaid, extraPaid, over, charges, amount: base + sum(charges, c => c.amount),
+        paid: !!o.paid || (minPaid > 0 && base === 0 && !charges.length), cleared: !!o.cleared, skip: !!o.skip,
         untracked: unt, note: unt ? (it.untrackedNote || '') : '', movedFrom,
         needsConfirm: (it.mode === 'ask' && !o.confirmed) || charges.some(c => c.needsConfirm)
       });
@@ -554,7 +556,13 @@ function extraIncomeForm(headDate, id) {
     }
   });
 }
-const partText = r => r.paidSoFar ? `${money(r.baseDue)} due, ${money(r.paidSoFar)} paid, ${r.over ? 'overpaid by ' + money(r.over) : money(r.base) + ' to go'}` : '';
+const partText = r => {
+  if (!r.paidSoFar) return '';
+  const bits = [`${money(r.baseDue)} due`];
+  if (r.minPaid) bits.push(`${money(r.minPaid)} paid`, r.over ? 'overpaid by ' + money(r.over) : money(r.base) + ' to go');
+  if (r.extraPaid) bits.push(`${money(r.extraPaid)} extra paid`);
+  return bits.join(', ');
+};
 function partForm(headDate, key) {
   const h = lastPlan.all.find(x => x.date === headDate), l = h.lines.find(x => x.key === key);
   return modal({
@@ -565,7 +573,7 @@ function partForm(headDate, key) {
       + money$('Payment made', 'paid', 0) + dateF('Date paid', 'pdate', today())
       + sel('Paid from', 'phead', headOptions(), (lastPlan.all.find(x => today() >= x.date && today() < x.end) || h).date)
       + chk('This is extra, on top of the minimum', 'extra', l.base === 0)
-      + '<p class="help">Tick this when the payment goes beyond what is due. The Balances page uses it to show how much you paid above the minimum.</p>',
+      + '<p class="help"><b>Not ticked:</b> the payment counts toward what is due, so "Left to play with" does not change (it was already set aside). <b>Ticked:</b> it is on top of what is due, so "Left to play with" goes down by that amount.</p>',
     onSubmit: fd => {
       const due = parseMoney(fd.get('due')), add = parseMoney(fd.get('paid'));
       if (due < 0) return 'Enter the amount due.';
@@ -638,7 +646,7 @@ function addLineForm(headDate, presetAmount = 0) {
     title: 'Add to this paycheck',
     body: sel('What is it?', 'kind', [['debt', 'Payment toward a debt (partial or extra)'], ['transfer', 'Send money to savings / another account'], ['bill', 'One-time bill or expense'], ['adjust', 'Balance adjustment (spending or a correction)'], ['fundin', 'Put into a sinking fund'], ['fundout', 'Pull back from a sinking fund']], presetAmount ? 'transfer' : 'debt')
       + sel('Which debt', 'itemId', [['', '— other —'], ...debts.map(d => [d.id, d.name])], '', 'data-showif="kind=debt"')
-      + chk('This is extra, on top of the minimum', 'extra', false, 'data-showif="kind=debt"')
+      + chk('This is extra, on top of the minimum (lowers Left to play with)', 'extra', false, 'data-showif="kind=debt"')
       + fld('Name', 'name', '', '', 'data-showif="kind=debt|transfer|bill"')
       + fld('Note (optional, e.g. groceries)', 'adjname', '', '', 'data-showif="kind=adjust"')
       + '<p class="help" data-showif="kind=adjust">Takes this amount off "Left to play with" for the paycheck, for spending or any correction. It is marked paid. To add money back, use + Extra income.</p>'
