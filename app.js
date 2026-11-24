@@ -69,7 +69,7 @@ let saveErr = '';
 let lastBackup = 0;
 let saveTimer = null;
 const store = { dir: null, dirName: '', pending: null };
-const state = { view: 'plan', month: null, step: 0 };
+const state = { view: 'now', month: null, step: 0 };
 
 const newDB = () => ({
   version: 2, onboarded: false, created: new Date().toISOString(), updated: '',
@@ -342,7 +342,7 @@ async function loadText(text) {
     DB = migrate(modal.result.db); ENC = modal.result.enc;
   } else if (obj && Array.isArray(obj.incomes) && Array.isArray(obj.items)) { DB = migrate(obj); ENC = null; }
   else { alert('That file is not a valid data file.'); return false; }
-  dirty = false; state.view = DB.onboarded ? 'plan' : 'onboard'; state.step = 0; state.month = null; state.scroll = true;
+  dirty = false; state.view = DB.onboarded ? 'now' : 'onboard'; state.step = 0; state.month = null; state.scroll = true;
   render();
   return true;
 }
@@ -740,7 +740,7 @@ function statusHtml() {
 }
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
 function topbar() {
-  const nav = [['plan', 'Plan'], ['balances', 'Balances'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
+  const nav = [['now', 'Now'], ['plan', 'Month'], ['balances', 'Cards'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
   return `<div class="topbar"><span class="brand">Visual Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
 }
 function viewStart() {
@@ -1065,6 +1065,44 @@ function checkinEditForm(id) {
     }
   });
 }
+
+// ---------- Now page and Cards ----------
+// The home page: today's date, the paycheck you are in, the next one, and what is over or under. Card balances are typed by hand.
+function cardsTable() {
+  const rows = debtItems().map(it => ({ it, last: checkinsFor(it.id).slice(-1)[0], next: nextDue(it) })).sort((a, b) => a.next.localeCompare(b.next));
+  const total = sum(rows, r => r.last ? r.last.amount : 0);
+  const body = rows.map(({ it, last, next }) => `<tr><td>${esc(it.name)}</td><td class="num">${last ? money(last.amount) + `<div class="muted small">as of ${fmtDate(last.date)}</div>` : '<span class="muted">not entered</span>'}</td><td class="num">${it.apr ? it.apr + '%' : '<span class="muted">—</span>'}</td><td class="num">${money(itemAmount(it))}</td><td>${fmtShort(next)}</td><td class="num"><button class="link" data-act="card-bal" data-id="${it.id}">Update balance</button><button class="link" data-act="edit-item" data-id="${it.id}">Edit</button></td></tr>`).join('');
+  return `<div class="card"><div class="head"><h2>Credit cards &amp; loans</h2>${rows.length ? `<span class="muted small">Total owed <b>${money(total)}</b></span>` : ''}</div>
+    <p class="help">Type each balance yourself whenever you want it current. Balances do not change your paycheck numbers; each payment amount is set in Setup.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Card</th><th class="num">Balance</th><th class="num">APR</th><th class="num">Payment</th><th>Next due</th><th></th></tr></thead><tbody>${body || '<tr><td colspan="6" class="muted">Add a Debt payment item in Setup and it appears here.</td></tr>'}</tbody></table></div></div>`;
+}
+function viewNow() {
+  const t = today(), np = nextPayDate();
+  if (!np) return `<div class="card"><h2>Welcome</h2><p>Add a <b>fixed income source</b> in Setup and your paychecks appear here.</p><button class="primary" data-act="nav" data-v="setup">Go to Setup</button></div>` + cardsTable();
+  const plan = buildPlan(monthKey(np)); lastPlan = plan;
+  const cur = plan.all.find(h => h.date <= t && t < h.end), nxt = plan.all.find(h => h.date > t);
+  const heads = [cur, nxt].filter(Boolean), view = { ...plan, next: nxt ? nxt.date : null, inProgress: null };
+  const days = nxt ? toDays(nxt.date) - toDays(t) : 0;
+  const box = (label, h) => h ? `<div class="stat"><div class="k">${label}</div><div class="v ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div><div class="muted small">${h.left < 0 ? 'short' : 'left to play with'}</div></div>` : '';
+  const top = `<div class="card"><div class="head"><div><h2>${fmtShort(t)}, ${t.slice(0, 4)}</h2><span class="muted small">${nxt ? `Next paycheck ${fmtShort(nxt.date)}, ${days === 1 ? 'tomorrow' : 'in ' + days + ' days'}` : ''}</span></div><button data-act="report-next">Next paycheck report</button></div>
+    <div class="stats" style="margin-top:8px">${box('This paycheck', cur)}${box('Next paycheck', nxt)}</div></div>`;
+  return top + heads.map(h => checkCard(h, view)).join('') + cardsTable();
+}
+function viewCards() { return cardsTable() + `<details class="card"><summary><b>History and month-to-month changes</b></summary>${viewBalances()}</details>`; }
+function cardBalanceForm(id) {
+  const it = byId(DB.items, id), last = checkinsFor(id).slice(-1)[0];
+  return modal({
+    title: `Balance: ${it.name}`,
+    body: '<p class="help">Type what the card shows now. It replaces the old number; nothing in your paycheck plan changes.</p>' + money$('Balance', 'amount', last ? last.amount : 0) + dateF('As of', 'date', today()),
+    onSubmit: fd => {
+      const raw = String(fd.get('amount') || '').trim(), amount = parseMoney(raw), date = fd.get('date');
+      if (raw === '' || amount < 0) return 'Enter the balance.';
+      if (date > today()) return 'The date cannot be in the future.';
+      DB.checkins = DB.checkins.filter(c => !(c.itemId === id && c.date === date));
+      DB.checkins.push({ id: uid(), itemId: id, date, amount }); commit();
+    }
+  });
+}
 function viewSettings() {
   return `<div class="card"><h2>Storage</h2>
     <p>${store.dir ? `Autosaving to folder <b>${esc(store.dirName)}</b> (<code>${FILE}</code>). Timestamped backups go in <code>backups/</code> (at most one every 10 minutes, newest 50 kept).` : `Not connected to a folder. <b>Save file</b> downloads a timestamped copy of your data; use that file with “Open a data file” next time.`}</p>
@@ -1083,7 +1121,7 @@ function render() {
   const app = $('#app');
   if (!DB) { app.innerHTML = viewStart(); return; }
   if (state.view === 'onboard') { app.innerHTML = viewOnboard(); return; }
-  const v = { plan: viewPlan, balances: viewBalances, funds: viewFunds, setup: viewSetup, settings: viewSettings }[state.view] || viewPlan;
+  const v = { now: viewNow, plan: viewPlan, balances: viewCards, funds: viewFunds, setup: viewSetup, settings: viewSettings }[state.view] || viewPlan;
   app.innerHTML = topbar() + v();
   if (state.view === 'plan' && state.scroll) {
     state.scroll = false;
@@ -1164,6 +1202,7 @@ const A = {
   },
   'fund-move': ({ id, dir }) => fundMoveForm(id, dir),
   'checkin-all': () => checkinAllForm(),
+  'card-bal': ({ id }) => cardBalanceForm(id),
   'edit-ci': ({ id }) => checkinEditForm(id),
   'del-ci': ({ id }) => { DB.checkins = DB.checkins.filter(c => c.id !== id); closeModal(true); commit(); },
   'edit-pay': ({ head, key }) => payForm(head, key),
@@ -1185,7 +1224,7 @@ const A = {
         ENC = await makeEnc(pw.value);
       }
     }
-    if (s === 4) { DB.onboarded = true; state.view = 'plan'; state.month = null; state.scroll = true; return commit(); }
+    if (s === 4) { DB.onboarded = true; state.view = 'now'; state.month = null; state.scroll = true; return commit(); }
     state.step++; render();
   }
 };
