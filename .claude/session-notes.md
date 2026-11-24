@@ -56,6 +56,11 @@ A serverless, offline, single-folder browser app: **"I have a paycheck coming â€
 - Balance adjustment (an extra line with category `Adjustment`, paid, named "Balance adjustment: <note>"; the edit form keeps the category). Fix: partials flagged `extra` no longer reduce `base`, so they lower Left to play with (`minPaid`/`extraPaid` in `buildPlan`, and `partText`). Fix: the Payments window syncs "Paid from" to the date paid. Setup shows `nextDue(i)` (the next real date) instead of the stored anchor; item lines moved by a "Pay this from" override show a "moved from" chip (`movedFrom`); the Skip label and help now mention bills paid before starting. Hash is in `docs/downloads/SHA256SUMS`, notes in `releases/v2.0.1.md`.
 - Rule the user confirmed: the paycheck the money came out of takes the deduction, and the paycheck where it was due is relieved by the same amount.
 
+## Shipped in v2.1.0 (2026-11-24)
+- Home page is now **Now** (`viewNow`): today's date, this paycheck and the next (`plan.all` head holding today, and the first head after today), two left-to-play-with boxes, the same `checkCard` cards, and `cardsTable()` (balances typed by hand via `cardBalanceForm`, stored as check-ins). Nav: Now, Month (old Plan), Cards (old Balances; history collapsed under the table), Sinking funds, Setup, Settings. `checkCard(h, plan, hideSubs)` and `rowHtml(h, r, hideSubs)` hide Subscription item rows on Now only; totals still count them.
+- Items now start at their first due date: `buildPlan` drops schedule repeats before `it.anchor` unless that occurrence has `paid`, `cleared` or partials. Charges folded into card payments are unchanged.
+- Why: the user found the paycheck routine confusing once balances, subscriptions, extras and moved lines interacted. They want: know the date, know the next paycheck, do the calculations. Balances are manual and do not feed the plan. Hash in `docs/downloads/SHA256SUMS`, notes in `releases/v2.1.0.md`.
+
 ## Open to-dos
 1. (Done in 1.0.1) rename to "Visual Paycheck Planner".
 2. No LICENSE file; landing page says "Free". Ask the user which license.

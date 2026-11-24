@@ -29,7 +29,7 @@ const stamp = () => { const d = new Date(); return `${d.getFullYear()}${pad(d.ge
 const FREQS = [['weekly', 'Weekly'], ['biweekly', 'Every 2 weeks'], ['semimonthly', 'Twice a month'], ['monthly', 'Monthly'], ['quarterly', 'Quarterly'], ['yearly', 'Yearly'], ['once', 'One time']];
 const CATS = ['Subscription', 'Debt payment', 'Bill', 'Transfer', 'Other'];
 const FILE = 'finance-data.json';
-const VERSION = '2.0.1';
+const VERSION = '2.1.0';
 
 // ---------- schedules ----------
 // s = { freq, anchor (ISO date), day2 }. Returns ISO dates in [from, to).
@@ -69,7 +69,7 @@ let saveErr = '';
 let lastBackup = 0;
 let saveTimer = null;
 const store = { dir: null, dirName: '', pending: null };
-const state = { view: 'plan', month: null, step: 0 };
+const state = { view: 'now', month: null, step: 0 };
 
 const newDB = () => ({
   version: 2, onboarded: false, created: new Date().toISOString(), updated: '',
@@ -140,7 +140,9 @@ function buildPlan(mk) {
   const isUntracked = (it, date) => it.chargeTo === '_untracked' && it.category !== 'Debt payment' && date >= (it.chargeSince || '');
   for (const it of DB.items) {
     if (it.active === false) continue;
-    const dues = occurrences(it, lo, hi);
+    // The date entered on an item is its first due date. Earlier repeats of the schedule are not tracked, unless a
+    // payment was recorded against one (so nothing you already paid or checked off disappears).
+    const dues = occurrences(it, lo, hi).filter(d => d >= it.anchor || ((o => o && (o.paid || o.cleared || (o.partials && o.partials.length)))(DB.occ[it.id + ':' + d])));
     const history = it.category === 'Debt payment' ? occurrences(it, addDays(lo, -400), hi) : [];
     for (const due of dues) {
       if (chargedOn(it, due)) continue;
@@ -340,7 +342,7 @@ async function loadText(text) {
     DB = migrate(modal.result.db); ENC = modal.result.enc;
   } else if (obj && Array.isArray(obj.incomes) && Array.isArray(obj.items)) { DB = migrate(obj); ENC = null; }
   else { alert('That file is not a valid data file.'); return false; }
-  dirty = false; state.view = DB.onboarded ? 'plan' : 'onboard'; state.step = 0; state.month = null; state.scroll = true;
+  dirty = false; state.view = DB.onboarded ? 'now' : 'onboard'; state.step = 0; state.month = null; state.scroll = true;
   render();
   return true;
 }
@@ -469,7 +471,7 @@ function itemForm(id) {
       + sel('Amount', 'mode', [['fixed', 'Fixed — same every time'], ['ask', 'Varies — I confirm each time']], it.mode)
       + money$('Typical amount', 'amount', it.mode === 'ask' ? (it.lastAmount ?? it.amount) : it.amount)
       + sel('How often', 'freq', FREQS, it.freq)
-      + fld('A due date (the schedule repeats from it)', 'anchor', it.anchor, 'type="date"')
+      + fld('First due date (earlier dates are not tracked)', 'anchor', it.anchor, 'type="date"')
       + fld('APR % (optional, used for interest estimates on the Balances page)', 'apr', it.apr ?? '', 'inputmode="decimal" placeholder="e.g. 24.99"', 'data-showif="category=Debt payment"')
       + fld('Second due day of month (1–31)', 'day2', it.day2 || '', 'inputmode="numeric"', 'data-showif="freq=semimonthly"')
       + fld('Goes to (e.g. Ally Savings)', 'dest', it.dest || '', '', 'data-showif="category=Transfer"')
@@ -738,7 +740,7 @@ function statusHtml() {
 }
 function renderStatus() { const el = $('#status'); if (el) el.innerHTML = statusHtml(); }
 function topbar() {
-  const nav = [['plan', 'Plan'], ['balances', 'Balances'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
+  const nav = [['now', 'Now'], ['plan', 'Month'], ['balances', 'Cards'], ['funds', 'Sinking funds'], ['setup', 'Setup'], ['settings', 'Settings']];
   return `<div class="topbar"><span class="brand">Visual Paycheck Planner</span><div class="nav">${nav.map(([k, t]) => `<button data-act="nav" data-v="${k}" class="${state.view === k ? 'on' : ''}">${t}</button>`).join('')}</div><span id="status">${statusHtml()}</span></div>`;
 }
 function viewStart() {
@@ -807,7 +809,7 @@ function viewOnboard() {
   return `<div class="topbar"><span class="brand">Visual Paycheck Planner — Setup</span><span id="status">${statusHtml()}</span></div>${prog}${body}${nav}`;
 }
 
-function rowHtml(h, r) {
+function rowHtml(h, r, hideSubs) {
   const d = fmtShort(r.date);
   if (r.kind === 'pay' || r.kind === 'xpay') {
     const landed = r.kind === 'xpay' || r.pay.landed;
@@ -837,7 +839,7 @@ function rowHtml(h, r) {
   }
   const nestedInfo = (r.partials || []).filter(p => !p.here).map(p => `<tr class="sub info"><td class="small">${fmtShort(p.date)}</td><td class="name">↳ ${p.extra ? 'Extra payment' : 'Payment'}, paid from the ${fmtShort(p.ph)} paycheck</td><td class="num muted" title="Deducted on the ${fmtShort(p.ph)} paycheck">${money(p.amount)}</td><td class="num muted">—</td><td class="chk"></td><td class="chk"></td><td class="num"><button class="link" data-act="part-pay" data-head="${h.date}" data-key="${esc(r.key)}">Edit</button></td></tr>`).join('');
   return `<tr class="${r.paid ? 'done' : ''}${r.skip ? ' skipped' : ''}"><td class="small">${d}</td>
-    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}${r.movedFrom ? `<span class="chip proj" title="Due ${fmtShort(r.due)}, moved from the ${fmtShort(r.movedFrom)} paycheck. Edit it and pick that paycheck in Pay this from to put it back.">moved from ${fmtShort(r.movedFrom)} paycheck</span>` : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
+    <td class="name">${esc(r.name)}${r.needsConfirm && !r.skip ? '<span class="chip">confirm amount</span>' : ''}${r.skip ? '<span class="chip proj">skipped</span>' : ''}${r.movedFrom ? `<span class="chip proj" title="Due ${fmtShort(r.due)}, moved from the ${fmtShort(r.movedFrom)} paycheck. Edit it and pick that paycheck in Pay this from to put it back.">moved from ${fmtShort(r.movedFrom)} paycheck</span>` : ''}<div class="muted small">${esc(r.category)}${r.dest ? ' → ' + esc(r.dest) : ''}</div>${r.paidSoFar ? `<div class="muted small">${partText(r)}</div>` : ''}${r.charges && r.charges.length ? `<div class="muted small">includes ${money(r.base)} payment + ${hideSubs ? money(sum(r.charges, c => c.amount)) + ' charged to this card' : r.charges.map(c => `${money(c.amount)} ${esc(c.it.name)}`).join(' + ')}</div>` : ''}</td>
     <td class="num">${r.skip ? '—' : '−' + money(r.amount)}</td><td class="num ${r.run < 0 ? 'neg' : ''}">${r.skip ? '' : money(r.run)}</td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="paid"${r.paid ? ' checked' : ''}></td>
     <td class="chk"><input type="checkbox" data-chg="tog" data-kind="${r.kind}" data-head="${h.date}" data-key="${esc(r.key)}" data-f="cleared"${r.cleared ? ' checked' : ''}></td>
@@ -890,16 +892,21 @@ function openReport(date) {
       <div style="margin-top:8px"><button type="button" class="primary" data-act="report-copy">Copy to clipboard</button> <button type="button" data-act="report-save" data-date="${date}">Download .txt</button> <span class="pos small" id="report-msg"></span></div>`
   });
 }
-function checkCard(h, plan) {
+function checkCard(h, plan, hideSubs) {
   const isNext = h.date === plan.next, t = today();
   const cur = h.date <= t && t < h.end;
   const badge = isNext ? '<span class="badge next">Next paycheck</span>' : (plan.inProgress === h ? '<span class="badge">Still in progress</span>' : cur ? '<span class="badge">Current period</span>' : '');
-  const n = h.rows.filter(r => r.t === 1 && !r.skip && !r.untracked && r.kind !== 'partial').length, u = h.rows.filter(r => r.untracked && !r.skip).length;
+  // On the Now page subscriptions are left out of the list (they are still counted in every total).
+  const isSub = r => r.kind === 'item' && r.category === 'Subscription';
+  const shown = hideSubs ? h.rows.filter(r => !isSub(r)) : h.rows, hidden = hideSubs ? h.rows.filter(isSub) : [];
+  const hiddenOut = sum(hidden.filter(r => !r.skip && !r.untracked), r => r.amount), hiddenOther = hidden.filter(r => r.untracked && !r.skip).length;
+  const n = shown.filter(r => r.t === 1 && !r.skip && !r.untracked && r.kind !== 'partial').length, u = shown.filter(r => r.untracked && !r.skip).length;
   return `<div class="card check${isNext ? ' next' : ''}" id="chk-${h.date}">
     <div class="head"><div><h2>${fmtShort(h.date)} paycheck ${badge}</h2><span class="muted small">Pays for ${fmtDate(h.date)} – ${fmtDate(addDays(h.end, -1))} · ${n} payment${n === 1 ? '' : 's'}${u ? ` · ${u} untracked` : ''}</span></div>
       <div class="leftbox"><div class="muted small">Left to play with</div><div class="big2 ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div></div></div>
     ${h.minRun < 0 ? `<div class="banner err small">Runs short by ${money(-h.minRun)} on ${fmtShort(h.minDate)} unless something moves.</div>` : ''}
-    <div class="tbl-wrap"><table class="tl"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Left after</th><th class="chk">Paid</th><th class="chk">Clrd</th><th></th></tr></thead><tbody>${h.rows.map(r => rowHtml(h, r)).join('')}</tbody></table></div>
+    <div class="tbl-wrap"><table class="tl"><thead><tr><th>Date</th><th>What</th><th class="num">Amount</th><th class="num">Left after</th><th class="chk">Paid</th><th class="chk">Clrd</th><th></th></tr></thead><tbody>${shown.map(r => rowHtml(h, r, hideSubs)).join('')}</tbody></table></div>
+    ${hidden.length ? `<p class="muted small" style="margin:6px 0">Subscriptions are hidden here${hiddenOut ? `: ${money(hiddenOut)} comes out of this paycheck and is included in the numbers above` : ''}${hiddenOther ? `${hiddenOut ? '; ' : ': '}${hiddenOther} paid from another account` : ''}.</p>` : ''}
     <div class="actions" style="justify-content:flex-start">
       <button data-act="add-line" data-head="${h.date}">+ Add payment / allocation</button>
       ${h.left > 0 ? `<button class="primary" data-act="add-line" data-head="${h.date}" data-amt="${h.left}">Allocate what’s left (${money(h.left)})</button>` : ''}
@@ -1063,6 +1070,44 @@ function checkinEditForm(id) {
     }
   });
 }
+
+// ---------- Now page and Cards ----------
+// The home page: today's date, the paycheck you are in, the next one, and what is over or under. Card balances are typed by hand.
+function cardsTable() {
+  const rows = debtItems().map(it => ({ it, last: checkinsFor(it.id).slice(-1)[0], next: nextDue(it) })).sort((a, b) => a.next.localeCompare(b.next));
+  const total = sum(rows, r => r.last ? r.last.amount : 0);
+  const body = rows.map(({ it, last, next }) => `<tr><td>${esc(it.name)}</td><td class="num">${last ? money(last.amount) + `<div class="muted small">as of ${fmtDate(last.date)}</div>` : '<span class="muted">not entered</span>'}</td><td class="num">${it.apr ? it.apr + '%' : '<span class="muted">—</span>'}</td><td class="num">${money(itemAmount(it))}</td><td>${fmtShort(next)}</td><td class="num"><button class="link" data-act="card-bal" data-id="${it.id}">Update balance</button><button class="link" data-act="edit-item" data-id="${it.id}">Edit</button></td></tr>`).join('');
+  return `<div class="card"><div class="head"><h2>Credit cards &amp; loans</h2>${rows.length ? `<span class="muted small">Total owed <b>${money(total)}</b></span>` : ''}</div>
+    <p class="help">Type each balance yourself whenever you want it current. Balances do not change your paycheck numbers; each payment amount is set in Setup.</p>
+    <div class="tbl-wrap"><table><thead><tr><th>Card</th><th class="num">Balance</th><th class="num">APR</th><th class="num">Payment</th><th>Next due</th><th></th></tr></thead><tbody>${body || '<tr><td colspan="6" class="muted">Add a Debt payment item in Setup and it appears here.</td></tr>'}</tbody></table></div></div>`;
+}
+function viewNow() {
+  const t = today(), np = nextPayDate();
+  if (!np) return `<div class="card"><h2>Welcome</h2><p>Add a <b>fixed income source</b> in Setup and your paychecks appear here.</p><button class="primary" data-act="nav" data-v="setup">Go to Setup</button></div>` + cardsTable();
+  const plan = buildPlan(monthKey(np)); lastPlan = plan;
+  const cur = plan.all.find(h => h.date <= t && t < h.end), nxt = plan.all.find(h => h.date > t);
+  const heads = [cur, nxt].filter(Boolean), view = { ...plan, next: nxt ? nxt.date : null, inProgress: null };
+  const days = nxt ? toDays(nxt.date) - toDays(t) : 0;
+  const box = (label, h) => h ? `<div class="stat"><div class="k">${label}</div><div class="v ${h.left < 0 ? 'neg' : 'pos'}">${money(h.left)}</div><div class="muted small">${h.left < 0 ? 'short' : 'left to play with'}</div></div>` : '';
+  const top = `<div class="card"><div class="head"><div><h2>${fmtShort(t)}, ${t.slice(0, 4)}</h2><span class="muted small">${nxt ? `Next paycheck ${fmtShort(nxt.date)}, ${days === 1 ? 'tomorrow' : 'in ' + days + ' days'}` : ''}</span></div><button data-act="report-next">Next paycheck report</button></div>
+    <div class="stats" style="margin-top:8px">${box('This paycheck', cur)}${box('Next paycheck', nxt)}</div></div>`;
+  return top + heads.map(h => checkCard(h, view, true)).join('') + cardsTable();
+}
+function viewCards() { return cardsTable() + `<details class="card"><summary><b>History and month-to-month changes</b></summary>${viewBalances()}</details>`; }
+function cardBalanceForm(id) {
+  const it = byId(DB.items, id), last = checkinsFor(id).slice(-1)[0];
+  return modal({
+    title: `Balance: ${it.name}`,
+    body: '<p class="help">Type what the card shows now. It replaces the old number; nothing in your paycheck plan changes.</p>' + money$('Balance', 'amount', last ? last.amount : 0) + dateF('As of', 'date', today()),
+    onSubmit: fd => {
+      const raw = String(fd.get('amount') || '').trim(), amount = parseMoney(raw), date = fd.get('date');
+      if (raw === '' || amount < 0) return 'Enter the balance.';
+      if (date > today()) return 'The date cannot be in the future.';
+      DB.checkins = DB.checkins.filter(c => !(c.itemId === id && c.date === date));
+      DB.checkins.push({ id: uid(), itemId: id, date, amount }); commit();
+    }
+  });
+}
 function viewSettings() {
   return `<div class="card"><h2>Storage</h2>
     <p>${store.dir ? `Autosaving to folder <b>${esc(store.dirName)}</b> (<code>${FILE}</code>). Timestamped backups go in <code>backups/</code> (at most one every 10 minutes, newest 50 kept).` : `Not connected to a folder. <b>Save file</b> downloads a timestamped copy of your data; use that file with “Open a data file” next time.`}</p>
@@ -1081,7 +1126,7 @@ function render() {
   const app = $('#app');
   if (!DB) { app.innerHTML = viewStart(); return; }
   if (state.view === 'onboard') { app.innerHTML = viewOnboard(); return; }
-  const v = { plan: viewPlan, balances: viewBalances, funds: viewFunds, setup: viewSetup, settings: viewSettings }[state.view] || viewPlan;
+  const v = { now: viewNow, plan: viewPlan, balances: viewCards, funds: viewFunds, setup: viewSetup, settings: viewSettings }[state.view] || viewPlan;
   app.innerHTML = topbar() + v();
   if (state.view === 'plan' && state.scroll) {
     state.scroll = false;
@@ -1162,6 +1207,7 @@ const A = {
   },
   'fund-move': ({ id, dir }) => fundMoveForm(id, dir),
   'checkin-all': () => checkinAllForm(),
+  'card-bal': ({ id }) => cardBalanceForm(id),
   'edit-ci': ({ id }) => checkinEditForm(id),
   'del-ci': ({ id }) => { DB.checkins = DB.checkins.filter(c => c.id !== id); closeModal(true); commit(); },
   'edit-pay': ({ head, key }) => payForm(head, key),
@@ -1183,7 +1229,7 @@ const A = {
         ENC = await makeEnc(pw.value);
       }
     }
-    if (s === 4) { DB.onboarded = true; state.view = 'plan'; state.month = null; state.scroll = true; return commit(); }
+    if (s === 4) { DB.onboarded = true; state.view = 'now'; state.month = null; state.scroll = true; return commit(); }
     state.step++; render();
   }
 };
