@@ -12,6 +12,7 @@ It is built for the "what does the next two weeks look like?" problem: bills pul
 
 ## Features
 
+- **A Now page that opens first.** Today's date, the paycheck you are in and the next one, and how much is left to play with (or short) on each. Subscriptions are hidden there but still counted in the totals. Your credit cards and loans sit below, and you update a balance by typing it.
 - **One card per paycheck.** Bills, subscriptions, credit card minimums, and transfers land on the paycheck that comes before their due date. Move or skip any single payment.
 - **Date order with a running balance.** See the day it gets tight.
 - **Left to play with.** Income minus what is due. Send the leftover to savings, a sinking fund, or an extra debt payment with one click.
@@ -40,13 +41,13 @@ Compare the SHA-256 fingerprint of the file you downloaded with the one publishe
 
 | System | Command |
 |---|---|
-| Windows (PowerShell) | `Get-FileHash .\visual-paycheck-planner-2.0.1.zip -Algorithm SHA256` |
-| macOS | `shasum -a 256 visual-paycheck-planner-2.0.1.zip` |
-| Linux | `sha256sum visual-paycheck-planner-2.0.1.zip` |
+| Windows (PowerShell) | `Get-FileHash .\visual-paycheck-planner-2.1.0.zip -Algorithm SHA256` |
+| macOS | `shasum -a 256 visual-paycheck-planner-2.1.0.zip` |
+| Linux | `sha256sum visual-paycheck-planner-2.1.0.zip` |
 
-**v2.0.1:** `28fbd4f16e615ad7f196bca6f88facf2ba455302a0a8b99708fd5596481c71cd`
+**v2.1.0:** `61c2c9cbf8585a7c6745f32cfb46b2e598b8342a34e7c744d6dfe09c8f4bfa5d`
 
-Older releases are listed in [`docs/downloads/SHA256SUMS`](docs/downloads/SHA256SUMS) (v2.0.0: `d98939ce2371c980800031edf382a649fcabdc4a00facc6b8e5ebe9bd099fe89`, v1.0.3: `483de015af421fec2016eadd248668a005b8080d64081e30fa7d600dd22de981`, v1.0.2: `85cd645f6145f82440bfa6c681a3f5a928ab10827fa0c1bcdf3ead85ad47d1c8`, v1.0.1: `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`, v1.0.0: `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`).
+Older releases are listed in [`docs/downloads/SHA256SUMS`](docs/downloads/SHA256SUMS) (v2.0.1: `28fbd4f16e615ad7f196bca6f88facf2ba455302a0a8b99708fd5596481c71cd`, v2.0.0: `d98939ce2371c980800031edf382a649fcabdc4a00facc6b8e5ebe9bd099fe89`, v1.0.3: `483de015af421fec2016eadd248668a005b8080d64081e30fa7d600dd22de981`, v1.0.2: `85cd645f6145f82440bfa6c681a3f5a928ab10827fa0c1bcdf3ead85ad47d1c8`, v1.0.1: `76c6a3bdc36447b97d142caf942a114b7d6292f039abd0c56515b57b258c3f38`, v1.0.0: `0da969691b4829e5388416291ba37be704147eb938df4473353e63a3a821746e`).
 
 A matching hash shows the file was not corrupted or altered on the way to you. The build is reproducible: running `python3 build.py` on this source produces a zip with the same hash. The app is three small, readable files (`index.html`, `app.js`, `style.css`), so you can also read exactly what it does.
 
@@ -55,7 +56,7 @@ A matching hash shows the file was not corrupted or altered on the way to you. T
 1. Unzip the download into a folder you will keep, such as Documents.
 2. Open `index.html` in your browser (double-click it).
 3. Follow the short setup: your income, the bills, subscriptions, and debts that pull money on a schedule, and any sinking funds.
-4. The **Plan** page opens on your next paycheck.
+4. The **Now** page opens, showing this paycheck and the next one. The **Month** page shows the whole month.
 
 It needs no internet connection and no installation.
 
